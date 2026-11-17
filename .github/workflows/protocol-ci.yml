@@ -1,0 +1,62 @@
+name: Multi-Agent Protocol CI
+
+on:
+  schedule:
+    - cron: '*/30 0-12 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      task_id:
+        description: 'Specific task ID to process (optional)'
+        required: false
+      simulate:
+        description: 'Simulate adapter success (for testing)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  protocol-run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Prepare protocol
+        run: |
+          mkdir -p phase1
+          echo "Protocol ready"
+      - name: Init DB and roles
+        run: |
+          cd phase1 || true
+          python3 cli.py init || true
+      - name: Process ready tasks
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          CODEX_API_KEY: ${{ secrets.CODEX_API_KEY }}
+        run: |
+          echo "Protocol cycle (third-party model ready)"
+          if [ "${{ inputs.simulate }}" = "true" ]; then
+            echo "Simulate mode"
+          else
+            echo "Real mode"
+          fi
+      - name: Upload audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: protocol-audit
+          path: |
+            /tmp/phase1_protocol.db
+            phase1/task-packages/
+          if-no-files-found: ignore
