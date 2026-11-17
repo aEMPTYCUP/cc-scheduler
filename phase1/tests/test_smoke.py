@@ -14,6 +14,10 @@ import protocol
 ROLE_ID = "A3-backend-engineer"
 TASK_ID = "T-03-smoke"
 
+# The acceptance decision must come from an identity other than the
+# implementer (T-07 self-acceptance guard in protocol.py).
+REVIEWER = "A7-reviewer"
+
 # BACKLOG/READY/CLAIMED are reached by create_task, ready_task and
 # atomic_claim; the rest are explicit transitions.
 EXPECTED_STATUS_CHAIN = [
@@ -45,8 +49,9 @@ def test_task_reaches_done_with_full_audit_chain(db_path: Path) -> None:
     protocol.atomic_claim(TASK_ID, agent_id=ROLE_ID)
 
     for to_status in EXPECTED_STATUS_CHAIN[3:]:
+        actor = REVIEWER if to_status == "ACCEPTED" else ROLE_ID
         protocol.transition(
-            TASK_ID, to_status, actor=ROLE_ID, reason=f"smoke -> {to_status}"
+            TASK_ID, to_status, actor=actor, reason=f"smoke -> {to_status}"
         )
 
     task = protocol.get_task(TASK_ID)

@@ -34,6 +34,11 @@ DB_PATH = _resolve_db_path()
 
 SCHEMA_VERSION = 1
 
+# Review decisions that require an independent reviewer
+# (P1_SCHEMA_DESIGN.md section 6.2): the implementer of a task may
+# not accept or reject it.
+REVIEW_DECISIONS = {"ACCEPTED", "REWORK"}
+
 # Controlled executors seeded into every v1 database (fresh install and
 # migration alike). Mirrors the seed table of P1_SCHEMA_DESIGN.md section 3.
 _EXECUTOR_SEED = (
@@ -289,8 +294,33 @@ def _write_package(task_id: str, package: dict):
     print(f"Package written to {pkg_dir}")
 
 
+def _self_acceptance_conflict(task: dict, actor: str,
+                              actor_executor_id: Optional[str]) -> Optional[tuple[str, str]]:
+    """Return (implementer, reviewer) when the reviewer is the implementer.
+
+    The implementer identity is the executor frozen into the task at claim
+    time (tasks.implementer_executor_id) or -- for a legacy claim that
+    carries no executor id -- the free-text claimed_by. The reviewer
+    identity is the actor_executor_id of the caller or, when it is not
+    given, the free-text actor. Both are plain strings: no authentication,
+    no RBAC (P1_SCHEMA_DESIGN.md section 6.2).
+
+    Limitation, recorded honestly: this can only prove that one identity
+    string tried to accept its own work. The stronger demand of the A7 role
+    spec -- an independent session that does not resume the implementer
+    conversation -- cannot be proven by the state machine and stays a matter
+    of role discipline plus the audit trail.
+    """
+    implementer = task.get("implementer_executor_id") or task.get("claimed_by")
+    reviewer = actor_executor_id or actor
+    if implementer and reviewer and reviewer == implementer:
+        return implementer, reviewer
+    return None
+
+
 def transition(task_id: str, to_status: str, actor: str, reason: str = "", evidence: str = "",
-               evidence_path: Optional[str] = None):
+               evidence_path: Optional[str] = None,
+               actor_executor_id: Optional[str] = None):
     valid = {
         "CLAIMED": ["IN_PROGRESS", "FAILED", "BLOCKED", "NEEDS_HUMAN"],
         "IN_PROGRESS": ["SUBMITTED", "FAILED", "BLOCKED", "NEEDS_HUMAN"],
@@ -304,12 +334,32 @@ def transition(task_id: str, to_status: str, actor: str, reason: str = "", evide
         "NEEDS_HUMAN": ["IN_PROGRESS", "REVIEW", "BLOCKED"],
     }
     with get_db() as conn:
-        row = conn.execute("SELECT status FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        row = conn.execute(
+            "SELECT status, implementer_executor_id, claimed_by FROM tasks WHERE task_id=?",
+            (task_id,),
+        ).fetchone()
         if not row:
             raise ValueError(f"Task {task_id} not found")
         current = row["status"]
         if to_status not in valid.get(current, []):
             raise ValueError(f"Invalid transition {current} → {to_status}")
+        if current == "REVIEW" and to_status in REVIEW_DECISIONS:
+            conflict = _self_acceptance_conflict(dict(row), actor, actor_executor_id)
+            if conflict is not None:
+                implementer, reviewer = conflict
+                _audit(
+                    conn, task_id, actor, current, current,
+                    f"self-acceptance rejected: reviewer {reviewer} == implementer {implementer}",
+                    f"attempted={to_status}",
+                )
+                # The "with get_db() as conn" block rolls the transaction back
+                # when the exception leaves it, and the rollback would drop
+                # the rejection audit as well. Commit it first so the refused
+                # attempt stays visible in the audit trail.
+                conn.commit()
+                raise PermissionError(
+                    f"self-acceptance forbidden: reviewer {reviewer} == implementer {implementer} of {task_id}"
+                )
         now = utcnow()
         conn.execute(
             "UPDATE tasks SET status=?, updated_at=? WHERE task_id=?",

@@ -20,6 +20,10 @@ import protocol
 ROLE_ID = "A3-backend-engineer"
 TASK_ID = "T-05-state-machine"
 
+# The acceptance decision must come from an identity other than the
+# implementer (T-07 self-acceptance guard in protocol.py).
+REVIEWER = "A7-reviewer"
+
 # The edges that P1 section 5 adds on top of the original mapping. The
 # original ten edges (CLAIMED->IN_PROGRESS, IN_PROGRESS->SUBMITTED,
 # SUBMITTED->REVIEW, REVIEW->ACCEPTED, REVIEW->REWORK, REWORK->CLAIMED,
@@ -92,7 +96,8 @@ def _create_task(db_path: Path, task_id: str = TASK_ID, claim: bool = True) -> s
 def _drive_to(task_id: str, status: str) -> None:
     """Move an already-claimed task to `status` through legal transitions."""
     for to_status in _PATHS[status]:
-        protocol.transition(task_id, to_status, actor=ROLE_ID, reason=f"drive -> {to_status}")
+        actor = REVIEWER if to_status == "ACCEPTED" else ROLE_ID
+        protocol.transition(task_id, to_status, actor=actor, reason=f"drive -> {to_status}")
     assert protocol.get_task(task_id)["status"] == status
 
 
@@ -144,8 +149,9 @@ def test_legacy_chain_still_reaches_done(db_path: Path) -> None:
     assert protocol.get_task(TASK_ID)["status"] == "CLAIMED"
 
     for from_status, to_status in LEGACY_CHAIN:
+        actor = REVIEWER if to_status == "ACCEPTED" else ROLE_ID
         protocol.transition(
-            TASK_ID, to_status, actor=ROLE_ID, reason=f"{from_status} -> {to_status}"
+            TASK_ID, to_status, actor=actor, reason=f"{from_status} -> {to_status}"
         )
         assert protocol.get_task(TASK_ID)["status"] == to_status
 
