@@ -20,7 +20,9 @@ trail and the self-acceptance guard remain the single source of truth.
 
 from __future__ import annotations
 
+import re
 import sqlite3
+import subprocess
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
@@ -337,6 +339,96 @@ class SimulatedAdapter(WorkerAdapter):
         return f"{tid} integrated (simulated) and moved to DONE"
 
 
+# --------------------------------------------------------------------------- #
+# read-only merge preview (no ref / index / worktree mutation)
+# --------------------------------------------------------------------------- #
+
+def _git_read(repo_path: str, *args: str) -> "subprocess.CompletedProcess":
+    return subprocess.run(
+        ["git", "-C", str(repo_path), *args], capture_output=True, text=True,
+    )
+
+
+def _parse_merge_tree(returncode: int, output: str) -> tuple[bool, List[str]]:
+    """Parse `git merge-tree --write-tree --name-only` output into (conflict, files)."""
+    if returncode == 0:
+        return False, []
+    files: List[str] = []
+    for line in output.splitlines()[1:]:  # line 1 is the merged tree OID
+        stripped = line.strip()
+        if not stripped or re.fullmatch(r"[0-9a-f]{40}", stripped):
+            continue
+        if stripped.startswith("Auto-merging"):
+            continue
+        match = re.match(r"CONFLICT .*? in (.+)$", stripped)
+        if match:
+            files.append(match.group(1).strip())
+        elif not stripped.startswith("CONFLICT"):
+            files.append(stripped)  # bare conflicted path from --name-only
+    seen: set[str] = set()
+    unique = [p for p in files if not (p in seen or seen.add(p))]
+    return True, unique
+
+
+def analyze_merge(repo_path: str, source_branch: str,
+                  target_branch: str = "master") -> Dict[str, Any]:
+    """Read-only mergeability of source_branch into target_branch.
+
+    Uses rev-parse / merge-base / merge-tree / diff, none of which move a ref,
+    touch the index or change the working tree (merge-tree only writes a tree
+    object). Mirrors the old engine's "master advanced -> rebase" rule with the
+    ``up_to_date`` flag instead of forcing any write.
+    """
+    repo = str(repo_path)
+
+    def head(branch: str) -> str:
+        result = _git_read(repo, "rev-parse", "--verify", f"{branch}^{{commit}}")
+        if result.returncode != 0:
+            raise ValueError(f"unknown branch {branch!r}: {result.stderr.strip()[:200]}")
+        return result.stdout.strip()
+
+    target_head = head(target_branch)
+    source_head = head(source_branch)
+    base = _git_read(repo, "merge-base", target_branch, source_branch)
+    merge_base = base.stdout.strip() if base.returncode == 0 else ""
+
+    ancestor = _git_read(repo, "merge-base", "--is-ancestor", target_branch, source_branch)
+    up_to_date = ancestor.returncode == 0  # target fully contained in source
+
+    tree = _git_read(repo, "merge-tree", "--write-tree", "--name-only",
+                     target_branch, source_branch)
+    conflicts, conflict_files = _parse_merge_tree(tree.returncode, tree.stdout)
+
+    changed: List[str] = []
+    if merge_base:
+        diff = _git_read(repo, "diff", "--name-only", f"{merge_base}...{source_branch}")
+        if diff.returncode == 0:
+            changed = [line for line in diff.stdout.splitlines() if line]
+
+    if conflicts:
+        verdict = "conflict"
+    elif up_to_date:
+        verdict = "fast_forward"
+    else:
+        verdict = "merge_needed"  # clean 3-way, but target advanced -> rebase expected
+    return {
+        "repo_path": repo,
+        "target_branch": target_branch,
+        "source_branch": source_branch,
+        "target_head": target_head,
+        "source_head": source_head,
+        "merge_base": merge_base,
+        "up_to_date": up_to_date,
+        "fast_forwardable": up_to_date and not conflicts,
+        "needs_rebase": not up_to_date,
+        "conflicts": conflicts,
+        "conflict_files": conflict_files,
+        "changed_files": changed,
+        "verdict": verdict,
+        "writable": False,  # this analysis never performs a write
+    }
+
+
 class GitIntegrationAdapter(WorkerAdapter):
     """Real A8 integration: merge an accepted task branch into the target branch.
 
@@ -347,6 +439,10 @@ class GitIntegrationAdapter(WorkerAdapter):
     failing post-merge check it aborts the merge and returns the task to REVIEW
     (the state machine's INTEGRATION -> REVIEW edge) with evidence instead of
     silently fixing business code.
+
+    :meth:`preview` is a strictly read-only mergeability analysis built on
+    ``git merge-tree``: it writes no ref, index entry or working-tree file and
+    is the only method allowed before the adapter is armed for real writes.
     """
 
     def __init__(self, repo_path: str, target_branch: str = "main",
@@ -357,10 +453,27 @@ class GitIntegrationAdapter(WorkerAdapter):
         self.remote_push = remote_push  # reserved; pushing stays explicitly off
 
     def _git(self, *args: str) -> "subprocess.CompletedProcess":
-        import subprocess
         return subprocess.run(
-            ["git", *args], cwd=self.repo_path, capture_output=True, text=True,
+            ["git", "-C", self.repo_path, *args],
+            capture_output=True, text=True,
         )
+
+    @staticmethod
+    def _branch_of(worktree: str) -> str:
+        result = subprocess.run(
+            ["git", "-C", worktree, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True,
+        )
+        branch = result.stdout.strip()
+        if result.returncode != 0 or not branch or branch == "HEAD":
+            raise ValueError(f"worktree {worktree} is not on a named branch")
+        return branch
+
+    def preview(self, source_branch: Optional[str] = None,
+                task: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Read-only mergeability check; never mutates refs, index or worktree."""
+        branch = source_branch or self._branch_of(task["worktree_path"])
+        return analyze_merge(self.repo_path, branch, self.target_branch)
 
     def implement(self, task, executor_id: str) -> str:
         raise PermissionError("the integration adapter cannot implement tasks")
@@ -373,9 +486,7 @@ class GitIntegrationAdapter(WorkerAdapter):
         worktree = task.get("worktree_path")
         if not worktree:
             raise ValueError(f"task {tid} has no worktree_path; nothing real to merge")
-        branch = self._git("-C", worktree, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-        if not branch or branch == "HEAD":
-            raise ValueError(f"task {tid} worktree is not on a named branch")
+        branch = self._branch_of(worktree)
 
         protocol.transition(tid, "INTEGRATION", executor_id,
                             f"A8: merging {branch} into {self.target_branch}",
@@ -390,7 +501,6 @@ class GitIntegrationAdapter(WorkerAdapter):
                                           f"merge conflict: {merge.stderr.strip()[:300]}")
                 return f"{tid} conflict -> sent back to REVIEW"
             if self.check_command:
-                import subprocess
                 check = subprocess.run(self.check_command, cwd=self.repo_path,
                                        shell=True, capture_output=True, text=True)
                 if check.returncode != 0:
