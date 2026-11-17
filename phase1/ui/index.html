@@ -1,544 +1,250 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>协议任务看板</title>
-  <style>
-    :root {
-      --bg: #f4f1ea;
-      --panel: #fffdf8;
-      --ink: #1c1915;
-      --muted: #6b6459;
-      --line: #ddd6c8;
-      --accent: #2156d6;
-      --ok: #1f7a4d;
-      --warn: #9a5b12;
-      --risk: #b42318;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      color: var(--ink);
-      background: var(--bg);
-      font: 16px/1.5 "Source Han Sans SC", "Noto Sans SC", "PingFang SC", sans-serif;
-    }
-    header {
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-      align-items: flex-end;
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 28px 20px 18px;
-    }
-    header p { margin: 0 0 4px; color: var(--muted); font-size: 13px; }
-    h1 { margin: 0; font-size: 28px; font-weight: 650; }
-    .meta { text-align: right; color: var(--muted); font-size: 13px; }
-    .badge {
-      display: inline-block;
-      margin-top: 8px;
-      padding: 3px 8px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      background: var(--panel);
-    }
-    .toolbar, .workspace, .empty, .error {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 0 20px 20px;
-    }
-    .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-    .tabs { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
-    .tabs button, .action, dialog button {
-      border: 0;
-      background: transparent;
-      color: var(--muted);
-      padding: 7px 12px;
-      border-radius: 6px;
-      font: inherit;
-      cursor: pointer;
-    }
-    .tabs button.active { color: var(--ink); background: #efe8d8; }
-    .workspace { display: grid; grid-template-columns: minmax(300px, 400px) minmax(0, 1fr); gap: 16px; }
-    .list { display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 200px); overflow: auto; }
-    .card, .detail, .empty, .error, dialog {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 12px;
-    }
-    .card {
-      text-align: left;
-      width: 100%;
-      padding: 14px;
-      font: inherit;
-      cursor: pointer;
-    }
-    .card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
-    .topline, .heading, .foot { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
-    .task-id, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; color: var(--muted); }
-    .card strong, .detail h2 { display: block; margin: 6px 0 4px; font-size: 16px; }
-    .status { font-size: 12px; font-weight: 650; }
-    .status-BACKLOG, .status-READY { color: var(--muted); }
-    .status-CLAIMED, .status-IN_PROGRESS { color: var(--accent); }
-    .status-SUBMITTED, .status-REVIEW, .status-INTEGRATION { color: var(--warn); }
-    .status-ACCEPTED, .status-DONE { color: var(--ok); }
-    .status-REWORK { color: var(--risk); }
-    .latest { margin: 4px 0 8px; color: var(--muted); font-size: 13px; }
-    .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
-    .actions select, .actions button, .detail-actions select, .detail-actions button {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fff;
-      color: var(--ink);
-      font: inherit;
-      font-size: 13px;
-      padding: 6px 10px;
-      cursor: pointer;
-    }
-    .actions button.primary, .detail-actions button.primary, dialog button.primary {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #fff;
-    }
-    .actions button:disabled, .detail-actions button:disabled { opacity: .5; cursor: not-allowed; }
-    .detail { padding: 20px; min-height: 320px; }
-    .detail h2 { margin: 0; font-size: 22px; }
-    .next { margin: 14px 0 18px; padding: 10px 12px; background: #efe8d8; border-radius: 8px; }
-    .next span { display: block; color: var(--muted); font-size: 12px; }
-    .detail-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0 18px; }
-    .notice { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
-    .audit { list-style: none; margin: 0; padding: 0; }
-    .audit li { position: relative; padding: 0 0 16px 22px; }
-    .audit li::before {
-      content: "";
-      position: absolute;
-      left: 5px; top: 8px; bottom: -4px;
-      width: 1px;
-      background: var(--line);
-    }
-    .audit li:last-child::before { display: none; }
-    .audit li::after {
-      content: "";
-      position: absolute;
-      left: 0; top: 8px;
-      width: 11px; height: 11px;
-      border: 2px solid var(--accent);
-      border-radius: 50%;
-      background: var(--panel);
-    }
-    .audit .row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; }
-    .empty, .error { padding: 28px; }
-    .error { color: var(--risk); }
-    dialog { max-width: 720px; width: calc(100% - 32px); padding: 20px; }
-    dialog::backdrop { background: rgba(28, 25, 21, .35); }
-    dialog textarea {
-      width: 100%;
-      min-height: 280px;
-      margin: 12px 0;
-      padding: 12px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      resize: vertical;
-    }
-    dialog .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
-    @media (max-width: 800px) {
-      .workspace, header, .toolbar { display: block; }
-      .meta, .toolbar { margin-top: 12px; text-align: left; }
-      .list { max-height: none; margin-bottom: 12px; }
-    }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>编排控制台 · cc-scheduler</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #171e2c; --panel2: #1e2740; --line: #2a3550;
+    --text: #e6ebf5; --muted: #8a97b1; --accent: #4f8cff; --green: #2fbf71;
+    --red: #f0556b; --amber: #f0a94f; --purple: #9d7bff;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+    font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif; }
+  header { display:flex; align-items:center; gap:16px; padding:14px 22px;
+    background:var(--panel); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }
+  header h1 { font-size:17px; margin:0; }
+  header .spacer { flex:1; }
+  button { font:inherit; border:1px solid var(--line); background:var(--panel2); color:var(--text);
+    padding:6px 12px; border-radius:8px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.go { background:var(--green); border-color:var(--green); color:#06130c; font-weight:600; }
+  button.stop { background:var(--red); border-color:var(--red); color:#1a070b; font-weight:600; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .ghost { background:transparent; }
+  .wrap { padding:20px 22px; max-width:1500px; margin:0 auto; }
+  .live { font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--green); box-shadow:0 0 0 0 rgba(47,191,113,.6);
+    animation:pulse 1.6s infinite; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(47,191,113,.5);} 70%{box-shadow:0 0 0 8px rgba(47,191,113,0);} 100%{box-shadow:0 0 0 0 rgba(47,191,113,0);} }
+  .toast { position:fixed; right:22px; bottom:22px; background:var(--red); color:#fff; padding:10px 14px;
+    border-radius:10px; max-width:380px; display:none; z-index:20; box-shadow:0 8px 30px rgba(0,0,0,.4); }
+  .toast.show { display:block; }
+
+  /* agent console */
+  .console { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px 18px; margin-bottom:22px; }
+  .console h2 { margin:0 0 12px; font-size:15px; }
+  .console .row { display:flex; flex-wrap:wrap; gap:14px; align-items:center; }
+  select { background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:8px;
+    padding:8px 10px; font:inherit; min-width:220px; }
+  .node-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:12px; margin-top:14px; }
+  .node-card { background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:14px; }
+  .node-card .top { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .node-name { font-weight:600; }
+  .switch { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:13px; }
+  .switch input { width:16px; height:16px; accent-color:var(--green); }
+  .switch.locked { color:var(--amber); }
+  .node-actions { display:flex; gap:8px; align-items:center; }
+  .runstate { font-size:12px; color:var(--muted); margin-top:10px; min-height:32px; }
+  .runstate b { color:var(--green); font-weight:600; }
+  .runstate .cur { color:var(--accent); }
+  .runstate .err { color:var(--red); }
+
+  /* board */
+  .board { display:grid; grid-template-columns:repeat(6,minmax(210px,1fr)); gap:12px; align-items:start; }
+  .column { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:10px; min-height:120px; }
+  .column h3 { margin:2px 4px 10px; font-size:13px; color:var(--muted); display:flex; justify-content:space-between; }
+  .column h3 .count { background:var(--panel2); border-radius:10px; padding:0 8px; color:var(--text); }
+  .task { background:var(--panel2); border:1px solid var(--line); border-left-width:3px; border-radius:10px;
+    padding:10px; margin-bottom:9px; }
+  .task .tid { font-weight:600; font-size:13px; }
+  .task .title { color:var(--muted); font-size:12px; margin:3px 0 8px; word-break:break-all; }
+  .task .meta { display:flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:11px; }
+  .tag { padding:2px 7px; border-radius:20px; background:#26304b; color:var(--muted); }
+  .tag.pri-high { background:#3a1d26; color:#ff9aaa; }
+  .tag.pri-medium { background:#3a301d; color:#ffce8f; }
+  .tag.pri-low { background:#22302a; color:#9fd8b8; }
+  .tag.owner { background:#1d2b3a; color:#9cc4ff; }
+  .tag.status { background:#2b2340; color:#c9b8ff; }
+  .task .lasterr { color:var(--red); font-size:11px; margin-top:7px; word-break:break-all; }
+  .task button { margin-top:8px; width:100%; padding:5px; font-size:12px; }
+  .empty { color:#56607a; font-size:12px; text-align:center; padding:14px 0; }
+  .hint { color:var(--muted); font-size:12px; margin-top:14px; }
+  .hint code { background:var(--panel2); padding:1px 6px; border-radius:6px; }
+</style>
 </head>
 <body>
-  <header>
-    <div>
-      <p>Phase 1 协议层</p>
-      <h1>任务看板</h1>
+<header>
+  <h1>编排控制台 · cc-scheduler</h1>
+  <span class="live"><span class="dot"></span><span id="live-text">连接中…</span></span>
+  <div class="spacer"></div>
+  <button class="ghost" id="btn-reset" title="重置为可复现的演示任务池（会清空当前任务并停止所有 worker）">重置演示池</button>
+</header>
+
+<div class="wrap">
+  <section class="console">
+    <h2>Agent 控制台</h2>
+    <div class="row">
+      <label>选择 Agent：
+        <select id="agent-select"></select>
+      </label>
+      <span class="hint" id="agent-kind"></span>
     </div>
+    <div class="node-grid" id="node-grid"></div>
+  </section>
+
+  <section class="board" id="board"></section>
+
+  <p class="hint">
+    流程：点亮某 Agent 的节点开关 → 点 <b>GO</b>，它会自动从任务池按优先级/先后顺序领取该节点任务并循环，直到池空或你点 <b>STOP</b>。
+    编程节点消费 <code>READY</code>，验收节点消费 <code>REVIEW</code>（且不会验收自己实现的任务）；豆包的验收开关为策略锁定，无法开启。
+    ACCEPTED 任务只停在「待集成」，由人工点集成才到 DONE，自动化绝不自动合并。
+  </p>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const COLUMNS = [
+  { key:"backlog",  label:"待编程",   statuses:["BACKLOG","READY"] },
+  { key:"coding",   label:"编程中",   statuses:["CLAIMED","IN_PROGRESS","SUBMITTED"] },
+  { key:"review",   label:"待验收",   statuses:["REVIEW"] },
+  { key:"accepted", label:"待集成(人工)", statuses:["ACCEPTED","INTEGRATION"] },
+  { key:"human",    label:"待人工/异常", statuses:["NEEDS_HUMAN","BLOCKED","FAILED","REWORK"] },
+  { key:"done",     label:"完成",     statuses:["DONE"] },
+];
+const STATUS_LABEL = {
+  BACKLOG:"待办", READY:"待编程", CLAIMED:"已认领", IN_PROGRESS:"编程中", SUBMITTED:"已提交",
+  REVIEW:"待验收", ACCEPTED:"验收通过", INTEGRATION:"集成中", DONE:"完成",
+  NEEDS_HUMAN:"待人工", BLOCKED:"已阻断", FAILED:"失败", REWORK:"返工",
+};
+const NODE_LABEL = { implement:"编程", acceptance:"验收" };
+let state = null, selected = null, toastTimer = null;
+
+function showError(msg){
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.classList.remove("show"), 5000);
+}
+async function api(path, body){
+  const opt = body ? { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) } : {};
+  const res = await fetch(path, { cache:"no-store", ...opt });
+  const data = await res.json().catch(()=>({}));
+  if (!res.ok || data.ok === false) throw new Error(data.error || ("HTTP " + res.status));
+  return data;
+}
+function esc(s){ return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function ago(iso){ if(!iso) return ""; const ms = Date.now() - Date.parse(iso); if(isNaN(ms)) return "";
+  const s = Math.round(ms/1000); if(s<60) return s+" 秒前"; if(s<3600) return Math.round(s/60)+" 分前"; return Math.round(s/3600)+" 时前"; }
+
+function renderAgentSelect(){
+  const sel = document.getElementById("agent-select");
+  const executors = state.control.executors;
+  if (!selected || !executors.some(e=>e.executor_id===selected)) selected = executors[0]?.executor_id || null;
+  sel.innerHTML = executors.map(e=>`<option value="${esc(e.executor_id)}" ${e.executor_id===selected?"selected":""}>${esc(e.label)} (${esc(e.executor_id)})</option>`).join("");
+  const cur = executors.find(e=>e.executor_id===selected);
+  document.getElementById("agent-kind").textContent = cur ? `类型：${esc(cur.kind)} · 状态：${cur.active?"启用":"停用"}` : "";
+  renderNodeGrid(cur);
+}
+
+function renderNodeGrid(executor){
+  const grid = document.getElementById("node-grid");
+  if(!executor){ grid.innerHTML=""; return; }
+  grid.innerHTML = state.control.nodes.map(node=>{
+    const cap = executor.capabilities[node.id] || { enabled:0, locked:0 };
+    const sess = executor.sessions[node.id] || {};
+    const running = !!sess.running;
+    const locked = !!cap.locked;
+    const switchCtrl = locked
+      ? `<span class="switch locked" title="策略锁定，不可开启">🔒 已锁定（不可开启）</span>`
+      : `<label class="switch"><input type="checkbox" data-node="${node.id}" class="cap-switch" ${cap.enabled?"checked":""}/> 能力开关</label>`;
+    const runState = running
+      ? `<b>● 运行中</b>${sess.current_task_id?` · 当前 <span class="cur">${esc(sess.current_task_id)}</span>`:" · 等待任务"} <br><span>${esc(ago(sess.last_heartbeat))} 心跳</span> ${sess.last_result?`· ${esc(sess.last_result)}`:""}`
+      : `○ 空闲 ${sess.last_result?`· <span class="err">${esc(sess.last_result)}</span>`:""}`;
+    return `<div class="node-card">
+      <div class="top">
+        <span class="node-name">${esc(node.label)}节点</span>
+        ${switchCtrl}
+      </div>
+      <div class="node-actions">
+        <button class="go" data-go="${node.id}" ${running||!cap.enabled?"disabled":""}>GO</button>
+        <button class="stop" data-stop="${node.id}" ${running?"":"disabled"}>STOP</button>
+      </div>
+      <div class="runstate">${runState}</div>
+    </div>`;
+  }).join("");
+
+  grid.querySelectorAll(".cap-switch").forEach(input=>{
+    input.addEventListener("change", async ()=>{
+      try { await api("/api/capability", { executor_id:selected, node:input.dataset.node, enabled:input.checked }); await refresh(); }
+      catch(e){ showError(e.message); await refresh(); }
+    });
+  });
+  grid.querySelectorAll("[data-go]").forEach(btn=>btn.addEventListener("click", async ()=>{
+    try { await api("/api/go", { executor_id:selected, node:btn.dataset.go }); await refresh(); }
+    catch(e){ showError(e.message); }
+  }));
+  grid.querySelectorAll("[data-stop]").forEach(btn=>btn.addEventListener("click", async ()=>{
+    try { await api("/api/stop", { executor_id:selected, node:btn.dataset.stop }); await refresh(); }
+    catch(e){ showError(e.message); }
+  }));
+}
+
+function taskCard(t){
+  const owner = t.implementer_executor_id || t.claimed_by || null;
+  const canIntegrate = t.status === "ACCEPTED";
+  return `<div class="task">
+    <div class="tid">${esc(t.task_id)}</div>
+    <div class="title">${esc(t.title || "")}</div>
     <div class="meta">
-      <div id="source-label">正在读取本地快照</div>
-      <span id="mode-badge" class="badge">可复制提示词 · 改状态需本地服务</span>
+      <span class="tag pri-${esc(t.priority||"medium")}">${esc(t.priority||"medium")}</span>
+      <span class="tag status">${esc(STATUS_LABEL[t.status] || t.status)}</span>
+      ${owner?`<span class="tag owner">👤 ${esc(owner)}</span>`:""}
     </div>
-  </header>
+    ${t.last_error?`<div class="lasterr">⚠ ${esc(t.last_error)}</div>`:""}
+    ${canIntegrate?`<button data-integrate="${esc(t.task_id)}">人工集成 → DONE</button>`:""}
+  </div>`;
+}
 
-  <div class="toolbar">
-    <div class="tabs" role="tablist">
-      <button id="tab-active" class="active" type="button">进行中</button>
-      <button id="tab-all" type="button">全部与历史</button>
-    </div>
-    <span id="count"></span>
-  </div>
+function renderBoard(){
+  const board = document.getElementById("board");
+  const tasks = state.tasks || [];
+  board.innerHTML = COLUMNS.map(col=>{
+    const items = tasks.filter(t=>col.statuses.includes(t.status));
+    return `<div class="column">
+      <h3><span>${col.label}</span><span class="count">${items.length}</span></h3>
+      ${items.length ? items.map(taskCard).join("") : `<div class="empty">—</div>`}
+    </div>`;
+  }).join("");
+  board.querySelectorAll("[data-integrate]").forEach(btn=>btn.addEventListener("click", async ()=>{
+    try { await api("/api/integrate", { task_id:btn.dataset.integrate }); await refresh(); }
+    catch(e){ showError(e.message); }
+  }));
+}
 
-  <div id="error" class="error" hidden></div>
-  <div id="empty" class="empty" hidden>这里暂时没有任务。</div>
-  <div id="workspace" class="workspace" hidden>
-    <section id="list" class="list" aria-label="任务队列"></section>
-    <section id="detail" class="detail" aria-label="任务详情"></section>
-  </div>
+async function refresh(){
+  try {
+    state = await api("/api/data");
+    document.getElementById("live-text").textContent =
+      `实时 · ${state.tasks.length} 任务 · 更新于 ${new Date().toLocaleTimeString()}`;
+    renderAgentSelect();
+    renderBoard();
+  } catch(e){
+    document.getElementById("live-text").textContent = "无法连接后端：" + e.message;
+  }
+}
 
-  <dialog id="prompt-dialog" aria-labelledby="prompt-title">
-    <h2 id="prompt-title">可复制提示词</h2>
-    <p class="notice" id="prompt-target"></p>
-    <textarea id="prompt-text" readonly></textarea>
-    <div class="dialog-actions">
-      <button type="button" id="prompt-close">关闭</button>
-      <button type="button" class="primary" id="prompt-copy">复制</button>
-    </div>
-  </dialog>
+document.getElementById("agent-select").addEventListener("change", e=>{ selected = e.target.value; refresh(); });
+document.getElementById("btn-reset").addEventListener("click", async ()=>{
+  if(!confirm("重置演示池？将清空当前任务、停止所有 worker，并重建 5 个待编程 + 1 个待验收任务。")) return;
+  try { await api("/api/reset-demo", {}); await refresh(); }
+  catch(e){ showError(e.message); }
+});
 
-  <script src="data.js"></script>
-  <script>
-    const DONE = new Set(["DONE"]);
-    const FALLBACK_EXECUTORS = [
-      { id: "doubao", label: "豆包" },
-      { id: "codex", label: "Codex" },
-      { id: "claude", label: "Claude" },
-      { id: "cursor", label: "Cursor" }
-    ];
-    let data = window.PHASE1_DATA || { tasks: [], audit: [], executors: FALLBACK_EXECUTORS, source: "missing", generated_at: null };
-    const live = location.protocol !== "file:";
-    const storedExecutors = (() => {
-      try { return JSON.parse(localStorage.getItem("phase1-ui-executors") || "{}"); }
-      catch { return {}; }
-    })();
-    const state = { includeHistory: false, selectedId: "", executors: storedExecutors, message: "" };
-
-    const statusText = {
-      BACKLOG: "待排期",
-      READY: "待领取",
-      CLAIMED: "已领取",
-      IN_PROGRESS: "开发中",
-      SUBMITTED: "已提交",
-      REVIEW: "验收中",
-      ACCEPTED: "已通过",
-      REWORK: "需返工",
-      INTEGRATION: "集成中",
-      DONE: "已完成"
-    };
-
-    function escapeHtml(value) {
-      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
-        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-      }[ch]));
-    }
-
-    function fmt(value) {
-      if (!value) return "时间未记录";
-      const date = new Date(value);
-      if (Number.isNaN(date.getTime())) return value;
-      const pad = (n) => String(n).padStart(2, "0");
-      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-    }
-
-    function labelStatus(status) {
-      return statusText[status] || status;
-    }
-
-    function executors() {
-      return (data.executors && data.executors.length) ? data.executors : FALLBACK_EXECUTORS;
-    }
-
-    function executorLabel(id) {
-      const found = executors().find((item) => item.id === id);
-      return found ? found.label : id;
-    }
-
-    function guessExecutor(task) {
-      const who = `${task.claimed_by || ""}`.toLowerCase();
-      const pairs = [["doubao", "doubao"], ["豆包", "doubao"], ["codex", "codex"], ["claude", "claude"], ["cursor", "cursor"]];
-      for (const [needle, id] of pairs) {
-        if (who.includes(needle)) return id;
-      }
-      return "doubao";
-    }
-
-    function selectedExecutor(taskId) {
-      const task = (data.tasks || []).find((item) => item.task_id === taskId);
-      return state.executors[taskId] || (task ? guessExecutor(task) : "doubao");
-    }
-
-    function setExecutor(taskId, executorId) {
-      state.executors[taskId] = executorId;
-      try { localStorage.setItem("phase1-ui-executors", JSON.stringify(state.executors)); } catch {}
-    }
-
-    function nextStep(task) {
-      const who = executorLabel(selectedExecutor(task.task_id));
-      switch (task.status) {
-        case "BACKLOG": return "等待排入可领取队列";
-        case "READY": return "等待执行者领取";
-        case "CLAIMED": return `等待 ${who} 开始开发`;
-        case "IN_PROGRESS": return `等待 ${who} 提交结果`;
-        case "SUBMITTED": return "等待进入验收";
-        case "REVIEW": return "等待 A7 给出验收结论";
-        case "REWORK": return `等待 ${who} 按意见修改后再提交`;
-        case "ACCEPTED": return "等待 A8 开始集成";
-        case "INTEGRATION": return "等待集成完成";
-        case "DONE": return "已完成，无需下一步";
-        default: return "请检查任务状态";
-      }
-    }
-
-    function latestAudit(task) {
-      if (task.latest_audit) return task.latest_audit;
-      const items = auditsFor(task.task_id);
-      return items[0] || null;
-    }
-
-    function auditLine(item) {
-      if (!item) return "还没有审计记录";
-      const step = item.from_status
-        ? `${labelStatus(item.from_status)} → ${labelStatus(item.to_status)}`
-        : labelStatus(item.to_status);
-      return `${item.actor || "未知执行者"} · ${step} · ${fmt(item.created_at)}`;
-    }
-
-    function visibleTasks() {
-      const tasks = data.tasks || [];
-      if (state.includeHistory) return tasks.slice();
-      return tasks.filter((task) => !DONE.has(task.status));
-    }
-
-    function auditsFor(taskId) {
-      return (data.audit || [])
-        .filter((item) => item.task_id === taskId)
-        .slice()
-        .reverse();
-    }
-
-    function recentAudit() {
-      return (data.audit || []).slice().reverse().slice(0, 12);
-    }
-
-    function buildPrompt(task) {
-      const executor = executorLabel(selectedExecutor(task.task_id));
-      const base = task.prompt_base || "缺少提示词内容，请重新运行 export_for_ui.py。";
-      return `请在【${executor}】中执行以下任务。\n\n${base}`;
-    }
-
-    function executorSelect(task) {
-      const current = selectedExecutor(task.task_id);
-      const options = executors().map((item) =>
-        `<option value="${escapeHtml(item.id)}"${item.id === current ? " selected" : ""}>${escapeHtml(item.label)}</option>`
-      ).join("");
-      return `<label>执行器 <select data-role="executor" data-task="${escapeHtml(task.task_id)}">${options}</select></label>`;
-    }
-
-    function showPrompt(task) {
-      const dialog = document.getElementById("prompt-dialog");
-      document.getElementById("prompt-target").textContent =
-        `${task.task_id} · 将复制到${executorLabel(selectedExecutor(task.task_id))}`;
-      document.getElementById("prompt-text").value = buildPrompt(task);
-      if (typeof dialog.showModal === "function") dialog.showModal();
-      else dialog.setAttribute("open", "open");
-    }
-
-    async function copyPrompt() {
-      const text = document.getElementById("prompt-text").value;
-      try {
-        await navigator.clipboard.writeText(text);
-        document.getElementById("prompt-copy").textContent = "已复制";
-        setTimeout(() => { document.getElementById("prompt-copy").textContent = "复制"; }, 1500);
-      } catch {
-        document.getElementById("prompt-text").select();
-      }
-    }
-
-    function submitHint(task) {
-      return `python3 scripts/mark_submitted.py --task-id ${task.task_id} --actor ${selectedExecutor(task.task_id)}`;
-    }
-
-    async function markSubmitted(task) {
-      if (!task.can_submit) {
-        state.message = `当前状态是「${labelStatus(task.status)}」，不能标记为已提交。`;
-        render();
-        return;
-      }
-      if (!live) {
-        state.message = `直接打开本地文件时不能改状态。请先运行 python3 scripts/ui_server.py，或手动执行：${submitHint(task)}`;
-        render();
-        return;
-      }
-      try {
-        const response = await fetch("/api/submit", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ task_id: task.task_id, actor: selectedExecutor(task.task_id) })
-        });
-        const result = await response.json();
-        if (!result.ok) {
-          state.message = result.error || "提交失败";
-          render();
-          return;
-        }
-        if (result.data) data = result.data;
-        state.message = `${task.task_id} 已标记为「${labelStatus(result.task.status)}」。`;
-        render();
-      } catch (error) {
-        state.message = `无法调用本地服务。可以手动执行：${submitHint(task)}`;
-        render();
-      }
-    }
-
-    function render() {
-      const source = document.getElementById("source-label");
-      const generated = data.generated_at ? fmt(data.generated_at) : "尚未生成";
-      const origin = data.source === "demo" ? "演示数据" : (data.source || "本地快照");
-      source.textContent = `${origin} · 生成于 ${generated}`;
-      document.getElementById("mode-badge").textContent = live
-        ? "本地服务已连接，可以标记已提交"
-        : "可复制提示词 · 改状态请启动本地服务";
-
-      const tasks = visibleTasks();
-      document.getElementById("count").textContent = `显示 ${tasks.length} 项任务`;
-      document.getElementById("tab-active").classList.toggle("active", !state.includeHistory);
-      document.getElementById("tab-all").classList.toggle("active", state.includeHistory);
-
-      const error = document.getElementById("error");
-      if (!window.PHASE1_DATA && !(data.tasks || []).length) {
-        error.hidden = false;
-        error.textContent = "没有读到 data.js。请先运行 python3 scripts/export_for_ui.py，再打开这个页面。";
-      } else if (state.message) {
-        error.hidden = false;
-        error.textContent = state.message;
-      } else {
-        error.hidden = true;
-      }
-
-      const empty = document.getElementById("empty");
-      const workspace = document.getElementById("workspace");
-      if (!tasks.length) {
-        empty.hidden = false;
-        workspace.hidden = true;
-        empty.textContent = state.includeHistory ? "队列里还没有任务记录。" : "当前没有进行中的任务，可切换到“全部与历史”。";
-        return;
-      }
-      empty.hidden = true;
-      workspace.hidden = false;
-
-      if (!tasks.some((task) => task.task_id === state.selectedId)) {
-        state.selectedId = tasks[0].task_id;
-      }
-
-      const list = document.getElementById("list");
-      list.innerHTML = "";
-      for (const task of tasks) {
-        const card = document.createElement("div");
-        card.className = "card" + (task.task_id === state.selectedId ? " selected" : "");
-        card.tabIndex = 0;
-        card.innerHTML = `
-          <div class="topline">
-            <span class="task-id">${escapeHtml(task.task_id)}</span>
-            <span class="status status-${escapeHtml(task.status)}">${escapeHtml(labelStatus(task.status))}</span>
-          </div>
-          <strong>${escapeHtml(task.title || "未命名任务")}</strong>
-          <div class="latest">最近记录：${escapeHtml(auditLine(latestAudit(task)))}</div>
-          <div class="foot">
-            <span>${escapeHtml(task.claimed_by || task.role_id || "尚未指定")}</span>
-            <span>下一步：${escapeHtml(nextStep(task))}</span>
-          </div>
-          <div class="actions">
-            ${executorSelect(task)}
-            <button type="button" data-role="prompt" data-task="${escapeHtml(task.task_id)}">生成提示词</button>
-          </div>`;
-        card.addEventListener("click", (event) => {
-          if (event.target.closest("select, button, label")) return;
-          state.selectedId = task.task_id;
-          render();
-        });
-        list.appendChild(card);
-      }
-
-      const selected = tasks.find((task) => task.task_id === state.selectedId);
-      const detail = document.getElementById("detail");
-      const items = auditsFor(selected.task_id);
-      const auditHtml = items.length
-        ? items.map((item) => `
-            <li>
-              <div class="row">
-                <strong>${escapeHtml(item.from_status ? `${labelStatus(item.from_status)} → ${labelStatus(item.to_status)}` : labelStatus(item.to_status))}</strong>
-                <span>${escapeHtml(item.actor || "未知执行者")}</span>
-              </div>
-              <div class="mono">${escapeHtml(fmt(item.created_at))}</div>
-              <div>${escapeHtml(item.reason || "未记录原因")}</div>
-            </li>`).join("")
-        : "<li>还没有审计记录。</li>";
-
-      const global = recentAudit();
-      const globalHtml = global.map((item) =>
-        `<li><span class="mono">${escapeHtml(item.task_id)}</span> ${escapeHtml(item.actor)}：${escapeHtml(item.from_status || "-")} → ${escapeHtml(item.to_status)} <span class="mono">${escapeHtml(fmt(item.created_at))}</span></li>`
-      ).join("");
-
-      const submitDisabled = selected.can_submit ? "" : " disabled";
-      detail.innerHTML = `
-        <div class="heading">
-          <div>
-            <span class="task-id">${escapeHtml(selected.task_id)}</span>
-            <h2>${escapeHtml(selected.title || "未命名任务")}</h2>
-          </div>
-          <span class="status status-${escapeHtml(selected.status)}">${escapeHtml(labelStatus(selected.status))}</span>
-        </div>
-        <p class="latest">当前状态：${escapeHtml(labelStatus(selected.status))}。最近一条审计：${escapeHtml(auditLine(latestAudit(selected)))}</p>
-        <div class="next"><span>接下来</span><strong>${escapeHtml(nextStep(selected))}</strong></div>
-        <div class="detail-actions">
-          ${executorSelect(selected)}
-          <button type="button" data-role="prompt" data-task="${escapeHtml(selected.task_id)}">生成提示词</button>
-          <button type="button" class="primary" data-role="submit" data-task="${escapeHtml(selected.task_id)}"${submitDisabled}>标记为已提交</button>
-        </div>
-        <p>${escapeHtml(selected.description || "没有补充说明。")}</p>
-        <p>角色：${escapeHtml(selected.role_id || "未指定")} · 执行者：${escapeHtml(selected.claimed_by || "尚未领取")}</p>
-        ${live ? "" : `<p class="notice">标记提交需要先运行 <span class="mono">python3 scripts/ui_server.py</span> 再打开看板。也可以手动执行 <span class="mono">${escapeHtml(submitHint(selected))}</span></p>`}
-        <h3>这条任务的审计记录</h3>
-        <ol class="audit">${auditHtml}</ol>
-        <h3>最近审计</h3>
-        <ol class="audit">${globalHtml || "<li>还没有审计记录。</li>"}</ol>
-      `;
-    }
-
-    document.addEventListener("change", (event) => {
-      const select = event.target.closest("select[data-role='executor']");
-      if (!select) return;
-      setExecutor(select.dataset.task, select.value);
-      render();
-    });
-
-    document.addEventListener("click", (event) => {
-      const button = event.target.closest("button[data-role]");
-      if (!button) return;
-      const task = (data.tasks || []).find((item) => item.task_id === button.dataset.task);
-      if (!task) return;
-      if (button.dataset.role === "prompt") showPrompt(task);
-      if (button.dataset.role === "submit") markSubmitted(task);
-    });
-
-    document.getElementById("tab-active").addEventListener("click", () => {
-      state.includeHistory = false;
-      render();
-    });
-    document.getElementById("tab-all").addEventListener("click", () => {
-      state.includeHistory = true;
-      render();
-    });
-    document.getElementById("prompt-close").addEventListener("click", () => {
-      document.getElementById("prompt-dialog").close();
-    });
-    document.getElementById("prompt-copy").addEventListener("click", () => { void copyPrompt(); });
-
-    async function boot() {
-      if (live) {
-        try {
-          const response = await fetch("/api/data", { cache: "no-store" });
-          if (response.ok) {
-            const payload = await response.json();
-            if (payload && Array.isArray(payload.tasks)) data = payload;
-          }
-        } catch {}
-      }
-      render();
-    }
-
-    boot();
-  </script>
+refresh();
+setInterval(refresh, 1500);
+</script>
 </body>
 </html>

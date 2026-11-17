@@ -57,6 +57,15 @@ def row_task(row: sqlite3.Row) -> dict:
         "claimed_by": row["claimed_by"],
         "claimed_at": row["claimed_at"],
         "worktree_path": row["worktree_path"],
+        # v1 structured-contract columns (absent on a legacy v0 row -> defaults)
+        "priority": row["priority"] if "priority" in keys else "medium",
+        "implementer_executor_id":
+            row["implementer_executor_id"] if "implementer_executor_id" in keys else None,
+        "retry_count": row["retry_count"] if "retry_count" in keys else 0,
+        "max_retries": row["max_retries"] if "max_retries" in keys else 3,
+        "last_error": row["last_error"] if "last_error" in keys else None,
+        "behavioral_check": row["behavioral_check"] if "behavioral_check" in keys else "",
+        "pass_condition": row["pass_condition"] if "pass_condition" in keys else "",
     }
 
 
