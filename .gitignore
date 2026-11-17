@@ -5,3 +5,12 @@ scheduler-run.log
 
 # Python local environment (bootstrap; T-02 adds the remaining artifact rules)
 .venv/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.db
+phase1/task-packages/
+phase1/logs/
+phase1/ui/data.json
+phase1/ui/data.js

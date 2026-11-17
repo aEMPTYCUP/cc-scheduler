@@ -25,7 +25,7 @@
 | ID | 状态 | 优先级 | 依赖 | redo | 标题 |
 | --- | --- | --- | --- | --- | --- |
 | T-01 | ✅ passed | high | — | 0 | DB 路径单一来源 + PHASE1_DB env |
-| T-02 | ⬜ | medium | T-01 | 0 | .gitignore 补全与生成物退跟踪 |
+| T-02 | ✅ passed | medium | T-01 | 0 | .gitignore 补全与生成物退跟踪 |
 | T-03 | ⬜ | high | T-01 | 0 | pytest 骨架 + CI 改真跑测试 |
 | T-04 | ⬜ | high | T-03 | 0 | schema v1 + user_version 幂等迁移 |
 | T-05 | ⬜ | high | T-04 | 0 | 状态机三异常态 + evidence_path |
