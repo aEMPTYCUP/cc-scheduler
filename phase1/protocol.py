@@ -39,6 +39,10 @@ SCHEMA_VERSION = 1
 # not accept or reject it.
 REVIEW_DECISIONS = {"ACCEPTED", "REWORK"}
 
+# Priority order, highest first. create_task() validates against it and
+# select_next_task() sorts by it.
+PRIORITY_ORDER = ("high", "medium", "low")
+
 # Controlled executors seeded into every v1 database (fresh install and
 # migration alike). Mirrors the seed table of P1_SCHEMA_DESIGN.md section 3.
 _EXECUTOR_SEED = (
@@ -174,17 +178,90 @@ def register_role(role_id: str):
 
 
 def create_task(task_id: str, title: str, description: str, role_id: str,
-                acceptance_criteria: str, created_by: str = "A0") -> str:
+                acceptance_criteria: str, created_by: str = "A0",
+                priority: str = "medium", dependencies: Optional[list] = None,
+                allowed_paths: Optional[list] = None,
+                behavioral_check: str = "",
+                pass_condition: str = "", max_retries: int = 3) -> str:
+    """Create a task in BACKLOG.
+
+    The keyword arguments behind created_by carry the structured contract
+    (P1_SCHEMA_DESIGN.md section 3). They all have defaults, so the legacy
+    six-argument call keeps working unchanged.
+    """
+    if priority not in PRIORITY_ORDER:
+        raise ValueError(
+            f"Invalid priority {priority!r}, expected one of {list(PRIORITY_ORDER)}"
+        )
+    if not isinstance(max_retries, int) or max_retries < 0:
+        raise ValueError(f"max_retries must be a non-negative integer, got {max_retries!r}")
+
+    # The dependency relation is authoritative in task_dependencies;
+    # dependencies_json is the denormalised snapshot the dashboard reads.
+    deps = sorted(set(dependencies or []))
+    dependencies_json = json.dumps(deps)
+    allowed_paths_json = json.dumps(allowed_paths if allowed_paths is not None else [])
+
     now = utcnow()
     with get_db() as conn:
+        if deps:
+            placeholders = ",".join("?" * len(deps))
+            known = {
+                row[0] for row in conn.execute(
+                    f"SELECT task_id FROM tasks WHERE task_id IN ({placeholders})", deps
+                ).fetchall()
+            }
+            missing = [dep for dep in deps if dep not in known]
+            if missing:
+                raise ValueError(f"Unknown dependency task(s): {', '.join(missing)}")
+
         conn.execute("""
             INSERT INTO tasks (task_id, title, description, role_id, status,
-                               acceptance_criteria, created_by, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 'BACKLOG', ?, ?, ?, ?)
-        """, (task_id, title, description, role_id, acceptance_criteria, created_by, now, now))
+                               acceptance_criteria, created_by, created_at, updated_at,
+                               priority, dependencies_json, allowed_paths_json,
+                               behavioral_check, pass_condition, max_retries)
+            VALUES (?, ?, ?, ?, 'BACKLOG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (task_id, title, description, role_id, acceptance_criteria, created_by,
+              now, now, priority, dependencies_json, allowed_paths_json,
+              behavioral_check, pass_condition, max_retries))
+        conn.executemany(
+            "INSERT INTO task_dependencies (task_id, depends_on) VALUES (?, ?)",
+            [(task_id, dep) for dep in deps],
+        )
         _audit(conn, task_id, created_by, None, "BACKLOG", "task created")
     print(f"Created task {task_id} in BACKLOG")
     return task_id
+
+
+def select_next_task() -> Optional[dict]:
+    """Return the READY task that should be worked on next, or None.
+
+    A task qualifies when every task it depends on is already DONE; a task
+    without dependencies qualifies as soon as it is READY.
+
+    Read-only on purpose: no status change, no claim, no audit row. Claiming
+    stays the job of atomic_claim().
+    """
+    with get_db() as conn:
+        row = conn.execute("""
+            SELECT t.* FROM tasks t
+            WHERE t.status = 'READY'
+              AND NOT EXISTS (
+                SELECT 1 FROM task_dependencies d
+                JOIN tasks dep ON dep.task_id = d.depends_on
+                WHERE d.task_id = t.task_id AND dep.status <> 'DONE'
+              )
+            ORDER BY CASE t.priority
+                       WHEN 'high' THEN 0
+                       WHEN 'medium' THEN 1
+                       WHEN 'low' THEN 2
+                       ELSE 3
+                     END,
+                     t.created_at ASC,
+                     t.task_id ASC
+            LIMIT 1
+        """).fetchone()
+        return dict(row) if row else None
 
 
 def ready_task(task_id: str, actor: str = "A0"):

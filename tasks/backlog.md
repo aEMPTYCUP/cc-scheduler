@@ -23,6 +23,7 @@
 - 后台任务内存回收开关：若要避免后台 shell 因内存压力被自动 kill，需在**启动 Claude Code 时**设置环境变量 `CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP=1`（在 shell 里临时 export 无效）。
 - **2026-11-17 T-06 实测修正（T-10 文档同步时处理）**：① register_role 的 INSERT OR REPLACE 在当前 NO ACTION 外键下**并不会立即报错**（语句末检查时新行已存在），真实危害是 delete-reinsert 使 rowid 漂移、以及未来若加 ON DELETE CASCADE 会静默删除引用任务——P1_SCHEMA_DESIGN.md 9.2 的"可能抛约束失败"措辞需改为"原地更新，避免 rowid 漂移与未来 CASCADE 风险"。② 独立 15 轮×8 线程（120 次领取）压测：败者全部走 SELECT 守卫抛 ValueError，`RuntimeError("Claim race lost")` 分支实际不可达但保留作防御；无 database-is-locked、无 flaky。
 - **2026-11-17 T-07 scope 矛盾修正（非 codex 缺陷，redo=0）**：守卫按 §6.2 用 `claimed_by` 回退拦截单人自验收是正确的（独立验证拒绝审计可在抛 PermissionError 后存活），但旧 test_smoke/test_state_machine 用单 actor 跑全程并在 REVIEW 自验收，与新规则冲突导致 3 个测试失败。教训：**新增强制规则时，allowed_paths 必须同时包含需要随之更新的既有测试**，不能既要求"拦截 claimed_by 自验收"又要求"旧测试一字不改且全绿"。处理：放宽 scope 让 codex 把这 3 处改为独立验收人，protocol.py 守卫禁止再动。
+- **2026-11-17 T-08 第二次内存回收（与 T-05 不同）**：本次 codex 仅完成基线确认（51 passed）就被 kill，**未写任何代码**（protocol.py 未改、test_selection.py 未生成），无半成品可本地验收，必须在内存缓解后**全新重派**。事件时空闲内存仅 19.3%（3.1GB）。结论：后台 codex 在空闲内存 <~25% 时被回收概率高；重派前应先把空闲内存释放到明显更高水平（建议 ≥5GB），或在启动 Claude Code 时设 `CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP=1` 关闭回收（需重启会话，且有系统内存耗尽风险）。
 
 ## 队列总表
 
@@ -35,7 +36,7 @@
 | T-05 | ✅ passed | high | T-04 | 0 | 状态机三异常态 + evidence_path |
 | T-06 | ✅ passed | high | T-04 | 0 | 修 rowcount/UPSERT 两 bug + implementer 身份 |
 | T-07 | ✅ passed | high | T-06 | 0 | 自验收机械守卫 |
-| T-08 | ⬜ | high | T-04 | 0 | 契约字段 + 依赖表 + select_next_task |
+| T-08 | ✅ passed | high | T-04 | 0 | 契约字段 + 依赖表 + select_next_task |
 | T-09 | ⬜ | high | T-05,T-06 | 0 | 失败处理 + task_evidence |
 | T-10 | ⬜ | medium | 全部 | 0 | 全量回归 + 文档同步 |
 
