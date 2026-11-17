@@ -50,7 +50,7 @@
     }
     .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
     .tabs { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
-    .tabs button {
+    .tabs button, .action, dialog button {
       border: 0;
       background: transparent;
       color: var(--muted);
@@ -60,9 +60,9 @@
       cursor: pointer;
     }
     .tabs button.active { color: var(--ink); background: #efe8d8; }
-    .workspace { display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); gap: 16px; }
+    .workspace { display: grid; grid-template-columns: minmax(300px, 400px) minmax(0, 1fr); gap: 16px; }
     .list { display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 200px); overflow: auto; }
-    .card, .detail, .empty, .error {
+    .card, .detail, .empty, .error, dialog {
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 12px;
@@ -84,10 +84,30 @@
     .status-SUBMITTED, .status-REVIEW, .status-INTEGRATION { color: var(--warn); }
     .status-ACCEPTED, .status-DONE { color: var(--ok); }
     .status-REWORK { color: var(--risk); }
+    .latest { margin: 4px 0 8px; color: var(--muted); font-size: 13px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+    .actions select, .actions button, .detail-actions select, .detail-actions button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+      font-size: 13px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    .actions button.primary, .detail-actions button.primary, dialog button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .actions button:disabled, .detail-actions button:disabled { opacity: .5; cursor: not-allowed; }
     .detail { padding: 20px; min-height: 320px; }
     .detail h2 { margin: 0; font-size: 22px; }
     .next { margin: 14px 0 18px; padding: 10px 12px; background: #efe8d8; border-radius: 8px; }
     .next span { display: block; color: var(--muted); font-size: 12px; }
+    .detail-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0 18px; }
+    .notice { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
     .audit { list-style: none; margin: 0; padding: 0; }
     .audit li { position: relative; padding: 0 0 16px 22px; }
     .audit li::before {
@@ -110,6 +130,19 @@
     .audit .row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; }
     .empty, .error { padding: 28px; }
     .error { color: var(--risk); }
+    dialog { max-width: 720px; width: calc(100% - 32px); padding: 20px; }
+    dialog::backdrop { background: rgba(28, 25, 21, .35); }
+    dialog textarea {
+      width: 100%;
+      min-height: 280px;
+      margin: 12px 0;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      resize: vertical;
+    }
+    dialog .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
     @media (max-width: 800px) {
       .workspace, header, .toolbar { display: block; }
       .meta, .toolbar { margin-top: 12px; text-align: left; }
@@ -120,12 +153,12 @@
 <body>
   <header>
     <div>
-      <p>Phase 1 协议层 · 只读演示</p>
+      <p>Phase 1 协议层</p>
       <h1>任务看板</h1>
     </div>
     <div class="meta">
       <div id="source-label">正在读取本地快照</div>
-      <span class="badge">不会改任务，也不会连实时后端</span>
+      <span id="mode-badge" class="badge">可复制提示词 · 改状态需本地服务</span>
     </div>
   </header>
 
@@ -144,11 +177,32 @@
     <section id="detail" class="detail" aria-label="任务详情"></section>
   </div>
 
+  <dialog id="prompt-dialog" aria-labelledby="prompt-title">
+    <h2 id="prompt-title">可复制提示词</h2>
+    <p class="notice" id="prompt-target"></p>
+    <textarea id="prompt-text" readonly></textarea>
+    <div class="dialog-actions">
+      <button type="button" id="prompt-close">关闭</button>
+      <button type="button" class="primary" id="prompt-copy">复制</button>
+    </div>
+  </dialog>
+
   <script src="data.js"></script>
   <script>
     const DONE = new Set(["DONE"]);
-    const data = window.PHASE1_DATA || { tasks: [], audit: [], source: "missing", generated_at: null };
-    const state = { includeHistory: false, selectedId: "" };
+    const FALLBACK_EXECUTORS = [
+      { id: "doubao", label: "豆包" },
+      { id: "codex", label: "Codex" },
+      { id: "claude", label: "Claude" },
+      { id: "cursor", label: "Cursor" }
+    ];
+    let data = window.PHASE1_DATA || { tasks: [], audit: [], executors: FALLBACK_EXECUTORS, source: "missing", generated_at: null };
+    const live = location.protocol !== "file:";
+    const storedExecutors = (() => {
+      try { return JSON.parse(localStorage.getItem("phase1-ui-executors") || "{}"); }
+      catch { return {}; }
+    })();
+    const state = { includeHistory: false, selectedId: "", executors: storedExecutors, message: "" };
 
     const statusText = {
       BACKLOG: "待排期",
@@ -163,6 +217,12 @@
       DONE: "已完成"
     };
 
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[ch]));
+    }
+
     function fmt(value) {
       if (!value) return "时间未记录";
       const date = new Date(value);
@@ -175,8 +235,36 @@
       return statusText[status] || status;
     }
 
+    function executors() {
+      return (data.executors && data.executors.length) ? data.executors : FALLBACK_EXECUTORS;
+    }
+
+    function executorLabel(id) {
+      const found = executors().find((item) => item.id === id);
+      return found ? found.label : id;
+    }
+
+    function guessExecutor(task) {
+      const who = `${task.claimed_by || ""}`.toLowerCase();
+      const pairs = [["doubao", "doubao"], ["豆包", "doubao"], ["codex", "codex"], ["claude", "claude"], ["cursor", "cursor"]];
+      for (const [needle, id] of pairs) {
+        if (who.includes(needle)) return id;
+      }
+      return "doubao";
+    }
+
+    function selectedExecutor(taskId) {
+      const task = (data.tasks || []).find((item) => item.task_id === taskId);
+      return state.executors[taskId] || (task ? guessExecutor(task) : "doubao");
+    }
+
+    function setExecutor(taskId, executorId) {
+      state.executors[taskId] = executorId;
+      try { localStorage.setItem("phase1-ui-executors", JSON.stringify(state.executors)); } catch {}
+    }
+
     function nextStep(task) {
-      const who = task.claimed_by || "执行者";
+      const who = executorLabel(selectedExecutor(task.task_id));
       switch (task.status) {
         case "BACKLOG": return "等待排入可领取队列";
         case "READY": return "等待执行者领取";
@@ -190,6 +278,20 @@
         case "DONE": return "已完成，无需下一步";
         default: return "请检查任务状态";
       }
+    }
+
+    function latestAudit(task) {
+      if (task.latest_audit) return task.latest_audit;
+      const items = auditsFor(task.task_id);
+      return items[0] || null;
+    }
+
+    function auditLine(item) {
+      if (!item) return "还没有审计记录";
+      const step = item.from_status
+        ? `${labelStatus(item.from_status)} → ${labelStatus(item.to_status)}`
+        : labelStatus(item.to_status);
+      return `${item.actor || "未知执行者"} · ${step} · ${fmt(item.created_at)}`;
     }
 
     function visibleTasks() {
@@ -209,20 +311,99 @@
       return (data.audit || []).slice().reverse().slice(0, 12);
     }
 
+    function buildPrompt(task) {
+      const executor = executorLabel(selectedExecutor(task.task_id));
+      const base = task.prompt_base || "缺少提示词内容，请重新运行 export_for_ui.py。";
+      return `请在【${executor}】中执行以下任务。\n\n${base}`;
+    }
+
+    function executorSelect(task) {
+      const current = selectedExecutor(task.task_id);
+      const options = executors().map((item) =>
+        `<option value="${escapeHtml(item.id)}"${item.id === current ? " selected" : ""}>${escapeHtml(item.label)}</option>`
+      ).join("");
+      return `<label>执行器 <select data-role="executor" data-task="${escapeHtml(task.task_id)}">${options}</select></label>`;
+    }
+
+    function showPrompt(task) {
+      const dialog = document.getElementById("prompt-dialog");
+      document.getElementById("prompt-target").textContent =
+        `${task.task_id} · 将复制到${executorLabel(selectedExecutor(task.task_id))}`;
+      document.getElementById("prompt-text").value = buildPrompt(task);
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "open");
+    }
+
+    async function copyPrompt() {
+      const text = document.getElementById("prompt-text").value;
+      try {
+        await navigator.clipboard.writeText(text);
+        document.getElementById("prompt-copy").textContent = "已复制";
+        setTimeout(() => { document.getElementById("prompt-copy").textContent = "复制"; }, 1500);
+      } catch {
+        document.getElementById("prompt-text").select();
+      }
+    }
+
+    function submitHint(task) {
+      return `python3 scripts/mark_submitted.py --task-id ${task.task_id} --actor ${selectedExecutor(task.task_id)}`;
+    }
+
+    async function markSubmitted(task) {
+      if (!task.can_submit) {
+        state.message = `当前状态是「${labelStatus(task.status)}」，不能标记为已提交。`;
+        render();
+        return;
+      }
+      if (!live) {
+        state.message = `直接打开本地文件时不能改状态。请先运行 python3 scripts/ui_server.py，或手动执行：${submitHint(task)}`;
+        render();
+        return;
+      }
+      try {
+        const response = await fetch("/api/submit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ task_id: task.task_id, actor: selectedExecutor(task.task_id) })
+        });
+        const result = await response.json();
+        if (!result.ok) {
+          state.message = result.error || "提交失败";
+          render();
+          return;
+        }
+        if (result.data) data = result.data;
+        state.message = `${task.task_id} 已标记为「${labelStatus(result.task.status)}」。`;
+        render();
+      } catch (error) {
+        state.message = `无法调用本地服务。可以手动执行：${submitHint(task)}`;
+        render();
+      }
+    }
+
     function render() {
       const source = document.getElementById("source-label");
       const generated = data.generated_at ? fmt(data.generated_at) : "尚未生成";
       const origin = data.source === "demo" ? "演示数据" : (data.source || "本地快照");
       source.textContent = `${origin} · 生成于 ${generated}`;
+      document.getElementById("mode-badge").textContent = live
+        ? "本地服务已连接，可以标记已提交"
+        : "可复制提示词 · 改状态请启动本地服务";
 
       const tasks = visibleTasks();
       document.getElementById("count").textContent = `显示 ${tasks.length} 项任务`;
       document.getElementById("tab-active").classList.toggle("active", !state.includeHistory);
       document.getElementById("tab-all").classList.toggle("active", state.includeHistory);
 
-      if (!window.PHASE1_DATA) {
-        document.getElementById("error").hidden = false;
-        document.getElementById("error").textContent = "没有读到 data.js。请先运行 python3 scripts/export_for_ui.py，再打开这个页面。";
+      const error = document.getElementById("error");
+      if (!window.PHASE1_DATA && !(data.tasks || []).length) {
+        error.hidden = false;
+        error.textContent = "没有读到 data.js。请先运行 python3 scripts/export_for_ui.py，再打开这个页面。";
+      } else if (state.message) {
+        error.hidden = false;
+        error.textContent = state.message;
+      } else {
+        error.hidden = true;
       }
 
       const empty = document.getElementById("empty");
@@ -243,24 +424,30 @@
       const list = document.getElementById("list");
       list.innerHTML = "";
       for (const task of tasks) {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "card" + (task.task_id === state.selectedId ? " selected" : "");
-        button.innerHTML = `
+        const card = document.createElement("div");
+        card.className = "card" + (task.task_id === state.selectedId ? " selected" : "");
+        card.tabIndex = 0;
+        card.innerHTML = `
           <div class="topline">
-            <span class="task-id">${task.task_id}</span>
-            <span class="status status-${task.status}">${labelStatus(task.status)}</span>
+            <span class="task-id">${escapeHtml(task.task_id)}</span>
+            <span class="status status-${escapeHtml(task.status)}">${escapeHtml(labelStatus(task.status))}</span>
           </div>
-          <strong>${task.title || "未命名任务"}</strong>
+          <strong>${escapeHtml(task.title || "未命名任务")}</strong>
+          <div class="latest">最近记录：${escapeHtml(auditLine(latestAudit(task)))}</div>
           <div class="foot">
-            <span>${task.claimed_by || task.role_id || "尚未指定"}</span>
-            <span>下一步：${nextStep(task)}</span>
+            <span>${escapeHtml(task.claimed_by || task.role_id || "尚未指定")}</span>
+            <span>下一步：${escapeHtml(nextStep(task))}</span>
+          </div>
+          <div class="actions">
+            ${executorSelect(task)}
+            <button type="button" data-role="prompt" data-task="${escapeHtml(task.task_id)}">生成提示词</button>
           </div>`;
-        button.addEventListener("click", () => {
+        card.addEventListener("click", (event) => {
+          if (event.target.closest("select, button, label")) return;
           state.selectedId = task.task_id;
           render();
         });
-        list.appendChild(button);
+        list.appendChild(card);
       }
 
       const selected = tasks.find((task) => task.task_id === state.selectedId);
@@ -270,36 +457,60 @@
         ? items.map((item) => `
             <li>
               <div class="row">
-                <strong>${item.from_status ? `${labelStatus(item.from_status)} → ${labelStatus(item.to_status)}` : labelStatus(item.to_status)}</strong>
-                <span>${item.actor || "未知执行者"}</span>
+                <strong>${escapeHtml(item.from_status ? `${labelStatus(item.from_status)} → ${labelStatus(item.to_status)}` : labelStatus(item.to_status))}</strong>
+                <span>${escapeHtml(item.actor || "未知执行者")}</span>
               </div>
-              <div class="mono">${fmt(item.created_at)}</div>
-              <div>${item.reason || "未记录原因"}</div>
+              <div class="mono">${escapeHtml(fmt(item.created_at))}</div>
+              <div>${escapeHtml(item.reason || "未记录原因")}</div>
             </li>`).join("")
         : "<li>还没有审计记录。</li>";
 
       const global = recentAudit();
       const globalHtml = global.map((item) =>
-        `<li><span class="mono">${item.task_id}</span> ${item.actor}：${item.from_status || "-"} → ${item.to_status} <span class="mono">${fmt(item.created_at)}</span></li>`
+        `<li><span class="mono">${escapeHtml(item.task_id)}</span> ${escapeHtml(item.actor)}：${escapeHtml(item.from_status || "-")} → ${escapeHtml(item.to_status)} <span class="mono">${escapeHtml(fmt(item.created_at))}</span></li>`
       ).join("");
 
+      const submitDisabled = selected.can_submit ? "" : " disabled";
       detail.innerHTML = `
         <div class="heading">
           <div>
-            <span class="task-id">${selected.task_id}</span>
-            <h2>${selected.title || "未命名任务"}</h2>
+            <span class="task-id">${escapeHtml(selected.task_id)}</span>
+            <h2>${escapeHtml(selected.title || "未命名任务")}</h2>
           </div>
-          <span class="status status-${selected.status}">${labelStatus(selected.status)}</span>
+          <span class="status status-${escapeHtml(selected.status)}">${escapeHtml(labelStatus(selected.status))}</span>
         </div>
-        <div class="next"><span>接下来</span><strong>${nextStep(selected)}</strong></div>
-        <p>${selected.description || "没有补充说明。"}</p>
-        <p>角色：${selected.role_id || "未指定"} · 执行者：${selected.claimed_by || "尚未领取"}</p>
+        <p class="latest">当前状态：${escapeHtml(labelStatus(selected.status))}。最近一条审计：${escapeHtml(auditLine(latestAudit(selected)))}</p>
+        <div class="next"><span>接下来</span><strong>${escapeHtml(nextStep(selected))}</strong></div>
+        <div class="detail-actions">
+          ${executorSelect(selected)}
+          <button type="button" data-role="prompt" data-task="${escapeHtml(selected.task_id)}">生成提示词</button>
+          <button type="button" class="primary" data-role="submit" data-task="${escapeHtml(selected.task_id)}"${submitDisabled}>标记为已提交</button>
+        </div>
+        <p>${escapeHtml(selected.description || "没有补充说明。")}</p>
+        <p>角色：${escapeHtml(selected.role_id || "未指定")} · 执行者：${escapeHtml(selected.claimed_by || "尚未领取")}</p>
+        ${live ? "" : `<p class="notice">标记提交需要先运行 <span class="mono">python3 scripts/ui_server.py</span> 再打开看板。也可以手动执行 <span class="mono">${escapeHtml(submitHint(selected))}</span></p>`}
         <h3>这条任务的审计记录</h3>
         <ol class="audit">${auditHtml}</ol>
         <h3>最近审计</h3>
         <ol class="audit">${globalHtml || "<li>还没有审计记录。</li>"}</ol>
       `;
     }
+
+    document.addEventListener("change", (event) => {
+      const select = event.target.closest("select[data-role='executor']");
+      if (!select) return;
+      setExecutor(select.dataset.task, select.value);
+      render();
+    });
+
+    document.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-role]");
+      if (!button) return;
+      const task = (data.tasks || []).find((item) => item.task_id === button.dataset.task);
+      if (!task) return;
+      if (button.dataset.role === "prompt") showPrompt(task);
+      if (button.dataset.role === "submit") markSubmitted(task);
+    });
 
     document.getElementById("tab-active").addEventListener("click", () => {
       state.includeHistory = false;
@@ -309,8 +520,25 @@
       state.includeHistory = true;
       render();
     });
+    document.getElementById("prompt-close").addEventListener("click", () => {
+      document.getElementById("prompt-dialog").close();
+    });
+    document.getElementById("prompt-copy").addEventListener("click", () => { void copyPrompt(); });
 
-    render();
+    async function boot() {
+      if (live) {
+        try {
+          const response = await fetch("/api/data", { cache: "no-store" });
+          if (response.ok) {
+            const payload = await response.json();
+            if (payload && Array.isArray(payload.tasks)) data = payload;
+          }
+        } catch {}
+      }
+      render();
+    }
+
+    boot();
   </script>
 </body>
 </html>

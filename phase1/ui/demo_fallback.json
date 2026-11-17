@@ -14,7 +14,8 @@
       "updated_at": "2026-11-17T02:18:00+00:00",
       "claimed_by": "doubao-operator",
       "claimed_at": "2026-11-17T02:12:00+00:00",
-      "worktree_path": null
+      "worktree_path": null,
+      "acceptance_criteria": "打开看板能看到任务、状态、最近审计，并能复制提示词。"
     },
     {
       "task_id": "T-DEMO-002",
@@ -27,7 +28,8 @@
       "updated_at": "2026-11-17T02:25:00+00:00",
       "claimed_by": "cursor-reviewer",
       "claimed_at": "2026-11-17T02:20:00+00:00",
-      "worktree_path": null
+      "worktree_path": null,
+      "acceptance_criteria": "给出明确的通过或返工结论，并写明依据。"
     },
     {
       "task_id": "T-E2E-001",
@@ -40,7 +42,8 @@
       "updated_at": "2026-11-17T01:55:00+00:00",
       "claimed_by": "doubao-operator",
       "claimed_at": "2026-11-17T00:50:00+00:00",
-      "worktree_path": null
+      "worktree_path": null,
+      "acceptance_criteria": "函数对除零返回安全值，并有对应测试。"
     }
   ],
   "audit": [

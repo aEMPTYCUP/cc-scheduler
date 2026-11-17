@@ -21,12 +21,14 @@ python3 scripts/assisted_pilot.py \
 
 ## Static board (demo)
 
-A read-only board lives in `ui/`. It lists tasks, status, and recent audit records from a JSON snapshot. It does not talk to a live backend.
+The board in `ui/` lists tasks, status, and the latest audit record. You can pick an executor (Doubao, Codex, Claude, or Cursor) and generate a copy-paste prompt that includes the task text plus a ROLE_SPEC summary.
 
 ```bash
 # from phase1/
 python3 scripts/export_for_ui.py          # uses /tmp/phase1_protocol.db if present
 python3 scripts/export_for_ui.py --demo   # rewrite the built-in demo snapshot
+python3 scripts/ui_server.py              # http://127.0.0.1:8765/  enables "mark submitted"
+python3 scripts/mark_submitted.py --task-id T-DEMO-001 --actor doubao
 ```
 
-Then open `ui/index.html` in a browser (the page reads `ui/data.js`, so a local file open is enough).
+Opening `ui/index.html` as a local file is enough to copy prompts. Changing status requires the local server or `mark_submitted.py`.
