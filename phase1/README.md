@@ -18,3 +18,15 @@ python3 scripts/assisted_pilot.py \
   --role A3-backend-engineer \
   --title "Add safe_div function"
 ```
+
+## Static board (demo)
+
+A read-only board lives in `ui/`. It lists tasks, status, and recent audit records from a JSON snapshot. It does not talk to a live backend.
+
+```bash
+# from phase1/
+python3 scripts/export_for_ui.py          # uses /tmp/phase1_protocol.db if present
+python3 scripts/export_for_ui.py --demo   # rewrite the built-in demo snapshot
+```
+
+Then open `ui/index.html` in a browser (the page reads `ui/data.js`, so a local file open is enough).

@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>协议任务看板</title>
+  <style>
+    :root {
+      --bg: #f4f1ea;
+      --panel: #fffdf8;
+      --ink: #1c1915;
+      --muted: #6b6459;
+      --line: #ddd6c8;
+      --accent: #2156d6;
+      --ok: #1f7a4d;
+      --warn: #9a5b12;
+      --risk: #b42318;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--bg);
+      font: 16px/1.5 "Source Han Sans SC", "Noto Sans SC", "PingFang SC", sans-serif;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-end;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 28px 20px 18px;
+    }
+    header p { margin: 0 0 4px; color: var(--muted); font-size: 13px; }
+    h1 { margin: 0; font-size: 28px; font-weight: 650; }
+    .meta { text-align: right; color: var(--muted); font-size: 13px; }
+    .badge {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 3px 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel);
+    }
+    .toolbar, .workspace, .empty, .error {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 20px 20px;
+    }
+    .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .tabs { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+    .tabs button {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      padding: 7px 12px;
+      border-radius: 6px;
+      font: inherit;
+      cursor: pointer;
+    }
+    .tabs button.active { color: var(--ink); background: #efe8d8; }
+    .workspace { display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); gap: 16px; }
+    .list { display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 200px); overflow: auto; }
+    .card, .detail, .empty, .error {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+    }
+    .card {
+      text-align: left;
+      width: 100%;
+      padding: 14px;
+      font: inherit;
+      cursor: pointer;
+    }
+    .card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+    .topline, .heading, .foot { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+    .task-id, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; color: var(--muted); }
+    .card strong, .detail h2 { display: block; margin: 6px 0 4px; font-size: 16px; }
+    .status { font-size: 12px; font-weight: 650; }
+    .status-BACKLOG, .status-READY { color: var(--muted); }
+    .status-CLAIMED, .status-IN_PROGRESS { color: var(--accent); }
+    .status-SUBMITTED, .status-REVIEW, .status-INTEGRATION { color: var(--warn); }
+    .status-ACCEPTED, .status-DONE { color: var(--ok); }
+    .status-REWORK { color: var(--risk); }
+    .detail { padding: 20px; min-height: 320px; }
+    .detail h2 { margin: 0; font-size: 22px; }
+    .next { margin: 14px 0 18px; padding: 10px 12px; background: #efe8d8; border-radius: 8px; }
+    .next span { display: block; color: var(--muted); font-size: 12px; }
+    .audit { list-style: none; margin: 0; padding: 0; }
+    .audit li { position: relative; padding: 0 0 16px 22px; }
+    .audit li::before {
+      content: "";
+      position: absolute;
+      left: 5px; top: 8px; bottom: -4px;
+      width: 1px;
+      background: var(--line);
+    }
+    .audit li:last-child::before { display: none; }
+    .audit li::after {
+      content: "";
+      position: absolute;
+      left: 0; top: 8px;
+      width: 11px; height: 11px;
+      border: 2px solid var(--accent);
+      border-radius: 50%;
+      background: var(--panel);
+    }
+    .audit .row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; }
+    .empty, .error { padding: 28px; }
+    .error { color: var(--risk); }
+    @media (max-width: 800px) {
+      .workspace, header, .toolbar { display: block; }
+      .meta, .toolbar { margin-top: 12px; text-align: left; }
+      .list { max-height: none; margin-bottom: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <p>Phase 1 协议层 · 只读演示</p>
+      <h1>任务看板</h1>
+    </div>
+    <div class="meta">
+      <div id="source-label">正在读取本地快照</div>
+      <span class="badge">不会改任务，也不会连实时后端</span>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div class="tabs" role="tablist">
+      <button id="tab-active" class="active" type="button">进行中</button>
+      <button id="tab-all" type="button">全部与历史</button>
+    </div>
+    <span id="count"></span>
+  </div>
+
+  <div id="error" class="error" hidden></div>
+  <div id="empty" class="empty" hidden>这里暂时没有任务。</div>
+  <div id="workspace" class="workspace" hidden>
+    <section id="list" class="list" aria-label="任务队列"></section>
+    <section id="detail" class="detail" aria-label="任务详情"></section>
+  </div>
+
+  <script src="data.js"></script>
+  <script>
+    const DONE = new Set(["DONE"]);
+    const data = window.PHASE1_DATA || { tasks: [], audit: [], source: "missing", generated_at: null };
+    const state = { includeHistory: false, selectedId: "" };
+
+    const statusText = {
+      BACKLOG: "待排期",
+      READY: "待领取",
+      CLAIMED: "已领取",
+      IN_PROGRESS: "开发中",
+      SUBMITTED: "已提交",
+      REVIEW: "验收中",
+      ACCEPTED: "已通过",
+      REWORK: "需返工",
+      INTEGRATION: "集成中",
+      DONE: "已完成"
+    };
+
+    function fmt(value) {
+      if (!value) return "时间未记录";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value;
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    }
+
+    function labelStatus(status) {
+      return statusText[status] || status;
+    }
+
+    function nextStep(task) {
+      const who = task.claimed_by || "执行者";
+      switch (task.status) {
+        case "BACKLOG": return "等待排入可领取队列";
+        case "READY": return "等待执行者领取";
+        case "CLAIMED": return `等待 ${who} 开始开发`;
+        case "IN_PROGRESS": return `等待 ${who} 提交结果`;
+        case "SUBMITTED": return "等待进入验收";
+        case "REVIEW": return "等待 A7 给出验收结论";
+        case "REWORK": return `等待 ${who} 按意见修改后再提交`;
+        case "ACCEPTED": return "等待 A8 开始集成";
+        case "INTEGRATION": return "等待集成完成";
+        case "DONE": return "已完成，无需下一步";
+        default: return "请检查任务状态";
+      }
+    }
+
+    function visibleTasks() {
+      const tasks = data.tasks || [];
+      if (state.includeHistory) return tasks.slice();
+      return tasks.filter((task) => !DONE.has(task.status));
+    }
+
+    function auditsFor(taskId) {
+      return (data.audit || [])
+        .filter((item) => item.task_id === taskId)
+        .slice()
+        .reverse();
+    }
+
+    function recentAudit() {
+      return (data.audit || []).slice().reverse().slice(0, 12);
+    }
+
+    function render() {
+      const source = document.getElementById("source-label");
+      const generated = data.generated_at ? fmt(data.generated_at) : "尚未生成";
+      const origin = data.source === "demo" ? "演示数据" : (data.source || "本地快照");
+      source.textContent = `${origin} · 生成于 ${generated}`;
+
+      const tasks = visibleTasks();
+      document.getElementById("count").textContent = `显示 ${tasks.length} 项任务`;
+      document.getElementById("tab-active").classList.toggle("active", !state.includeHistory);
+      document.getElementById("tab-all").classList.toggle("active", state.includeHistory);
+
+      if (!window.PHASE1_DATA) {
+        document.getElementById("error").hidden = false;
+        document.getElementById("error").textContent = "没有读到 data.js。请先运行 python3 scripts/export_for_ui.py，再打开这个页面。";
+      }
+
+      const empty = document.getElementById("empty");
+      const workspace = document.getElementById("workspace");
+      if (!tasks.length) {
+        empty.hidden = false;
+        workspace.hidden = true;
+        empty.textContent = state.includeHistory ? "队列里还没有任务记录。" : "当前没有进行中的任务，可切换到“全部与历史”。";
+        return;
+      }
+      empty.hidden = true;
+      workspace.hidden = false;
+
+      if (!tasks.some((task) => task.task_id === state.selectedId)) {
+        state.selectedId = tasks[0].task_id;
+      }
+
+      const list = document.getElementById("list");
+      list.innerHTML = "";
+      for (const task of tasks) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "card" + (task.task_id === state.selectedId ? " selected" : "");
+        button.innerHTML = `
+          <div class="topline">
+            <span class="task-id">${task.task_id}</span>
+            <span class="status status-${task.status}">${labelStatus(task.status)}</span>
+          </div>
+          <strong>${task.title || "未命名任务"}</strong>
+          <div class="foot">
+            <span>${task.claimed_by || task.role_id || "尚未指定"}</span>
+            <span>下一步：${nextStep(task)}</span>
+          </div>`;
+        button.addEventListener("click", () => {
+          state.selectedId = task.task_id;
+          render();
+        });
+        list.appendChild(button);
+      }
+
+      const selected = tasks.find((task) => task.task_id === state.selectedId);
+      const detail = document.getElementById("detail");
+      const items = auditsFor(selected.task_id);
+      const auditHtml = items.length
+        ? items.map((item) => `
+            <li>
+              <div class="row">
+                <strong>${item.from_status ? `${labelStatus(item.from_status)} → ${labelStatus(item.to_status)}` : labelStatus(item.to_status)}</strong>
+                <span>${item.actor || "未知执行者"}</span>
+              </div>
+              <div class="mono">${fmt(item.created_at)}</div>
+              <div>${item.reason || "未记录原因"}</div>
+            </li>`).join("")
+        : "<li>还没有审计记录。</li>";
+
+      const global = recentAudit();
+      const globalHtml = global.map((item) =>
+        `<li><span class="mono">${item.task_id}</span> ${item.actor}：${item.from_status || "-"} → ${item.to_status} <span class="mono">${fmt(item.created_at)}</span></li>`
+      ).join("");
+
+      detail.innerHTML = `
+        <div class="heading">
+          <div>
+            <span class="task-id">${selected.task_id}</span>
+            <h2>${selected.title || "未命名任务"}</h2>
+          </div>
+          <span class="status status-${selected.status}">${labelStatus(selected.status)}</span>
+        </div>
+        <div class="next"><span>接下来</span><strong>${nextStep(selected)}</strong></div>
+        <p>${selected.description || "没有补充说明。"}</p>
+        <p>角色：${selected.role_id || "未指定"} · 执行者：${selected.claimed_by || "尚未领取"}</p>
+        <h3>这条任务的审计记录</h3>
+        <ol class="audit">${auditHtml}</ol>
+        <h3>最近审计</h3>
+        <ol class="audit">${globalHtml || "<li>还没有审计记录。</li>"}</ol>
+      `;
+    }
+
+    document.getElementById("tab-active").addEventListener("click", () => {
+      state.includeHistory = false;
+      render();
+    });
+    document.getElementById("tab-all").addEventListener("click", () => {
+      state.includeHistory = true;
+      render();
+    });
+
+    render();
+  </script>
+</body>
+</html>
