@@ -260,15 +260,19 @@ def _write_package(task_id: str, package: dict):
     print(f"Package written to {pkg_dir}")
 
 
-def transition(task_id: str, to_status: str, actor: str, reason: str = "", evidence: str = ""):
+def transition(task_id: str, to_status: str, actor: str, reason: str = "", evidence: str = "",
+               evidence_path: Optional[str] = None):
     valid = {
-        "CLAIMED": ["IN_PROGRESS"],
-        "IN_PROGRESS": ["SUBMITTED"],
+        "CLAIMED": ["IN_PROGRESS", "FAILED", "BLOCKED", "NEEDS_HUMAN"],
+        "IN_PROGRESS": ["SUBMITTED", "FAILED", "BLOCKED", "NEEDS_HUMAN"],
         "SUBMITTED": ["REVIEW"],
-        "REVIEW": ["ACCEPTED", "REWORK"],
+        "REVIEW": ["ACCEPTED", "REWORK", "NEEDS_HUMAN"],
         "REWORK": ["CLAIMED", "IN_PROGRESS"],
         "ACCEPTED": ["INTEGRATION"],
         "INTEGRATION": ["REVIEW", "DONE"],
+        "FAILED": ["IN_PROGRESS", "BLOCKED"],
+        "BLOCKED": ["IN_PROGRESS", "NEEDS_HUMAN"],
+        "NEEDS_HUMAN": ["IN_PROGRESS", "REVIEW", "BLOCKED"],
     }
     with get_db() as conn:
         row = conn.execute("SELECT status FROM tasks WHERE task_id=?", (task_id,)).fetchone()
@@ -282,15 +286,17 @@ def transition(task_id: str, to_status: str, actor: str, reason: str = "", evide
             "UPDATE tasks SET status=?, updated_at=? WHERE task_id=?",
             (to_status, now, task_id)
         )
-        _audit(conn, task_id, actor, current, to_status, reason, evidence)
+        _audit(conn, task_id, actor, current, to_status, reason, evidence, evidence_path)
     print(f"Task {task_id}: {current} → {to_status}")
 
 
-def _audit(conn, task_id, actor, from_status, to_status, reason, evidence=""):
+def _audit(conn, task_id, actor, from_status, to_status, reason, evidence="",
+           evidence_path: Optional[str] = None):
     conn.execute("""
-        INSERT INTO audit_log (task_id, actor, from_status, to_status, reason, evidence, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (task_id, actor, from_status, to_status, reason, evidence, utcnow()))
+        INSERT INTO audit_log (task_id, actor, from_status, to_status, reason, evidence,
+                               evidence_path, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (task_id, actor, from_status, to_status, reason, evidence, evidence_path, utcnow()))
 
 
 def get_task(task_id: str) -> Optional[dict]:
