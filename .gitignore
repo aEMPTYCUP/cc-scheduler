@@ -2,3 +2,6 @@
 scheduled_tasks.json
 scheduler-prompt-current.txt
 scheduler-run.log
+
+# Python local environment (bootstrap; T-02 adds the remaining artifact rules)
+.venv/
