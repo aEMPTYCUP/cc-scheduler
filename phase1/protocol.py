@@ -527,3 +527,172 @@ def get_audit(task_id: str) -> list:
             "SELECT * FROM audit_log WHERE task_id=? ORDER BY id", (task_id,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# T-09: failure handling and evidence
+# ---------------------------------------------------------------------------
+
+# The evidence kinds the schema allows. The kind is checked in the
+# application and not only by the schema constraint: the constraint is not
+# guaranteed on every database this code runs against.
+EVIDENCE_KINDS = ("cli_log", "diff_patch", "commit_sha", "package_hash", "other")
+
+# The states a task may fail from.
+FAILURE_SOURCES = ("CLAIMED", "IN_PROGRESS")
+
+# The states block_task() may be called from.
+BLOCK_SOURCES = ("CLAIMED", "IN_PROGRESS", "FAILED", "NEEDS_HUMAN")
+
+# The states request_human() may be called from.
+HUMAN_SOURCES = ("CLAIMED", "IN_PROGRESS", "REVIEW", "BLOCKED")
+
+
+def _error_summary(error: str, limit: int = 200) -> str:
+    """One line, length capped version of an error, for the audit reason."""
+    text = " ".join(str(error).split())
+    if len(text) > limit:
+        text = text[: limit - 3] + "..."
+    return text
+
+
+def _task_status(conn: sqlite3.Connection, task_id: str) -> str:
+    """Current status of a task; ValueError when the task does not exist."""
+    row = conn.execute("SELECT status FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"Task {task_id} not found")
+    return row["status"]
+
+
+def record_failure(task_id: str, actor: str, error: str, reason: str = "") -> str:
+    """Record one failed attempt and return the status the task lands in.
+
+    Only a running task may fail: CLAIMED and IN_PROGRESS. The counter, the
+    error and the timestamp are written with a single UPDATE that leaves
+    status alone; the status change itself goes through transition(), so the
+    legal edge check and the audit trail stay where they have always been.
+
+    The task ends in FAILED while attempts are left, and in BLOCKED once the
+    last attempt is used up (retry_count >= max_retries).
+    """
+    with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT status, retry_count, max_retries FROM tasks WHERE task_id=?",
+            (task_id,),
+        ).fetchone()
+        if row is None:
+            conn.execute("ROLLBACK")
+            raise ValueError(f"Task {task_id} not found")
+        current = row["status"]
+        if current not in FAILURE_SOURCES:
+            conn.execute("ROLLBACK")
+            raise ValueError(
+                f"Cannot record failure for task {task_id} in status {current}"
+            )
+        retry_count = row["retry_count"] + 1
+        max_retries = row["max_retries"]
+        target = "BLOCKED" if retry_count >= max_retries else "FAILED"
+        conn.execute(
+            "UPDATE tasks SET retry_count=?, last_error=?, updated_at=? WHERE task_id=?",
+            (retry_count, error, utcnow(), task_id),
+        )
+        conn.execute("COMMIT")
+
+    detail = f"failure {retry_count}/{max_retries}: {_error_summary(error)}"
+    transition(
+        task_id,
+        target,
+        actor=actor,
+        reason=f"{detail}; {reason}" if reason else detail,
+    )
+    print(f"Task {task_id}: {detail} → {target}")
+    return target
+
+
+def block_task(task_id: str, actor: str, reason: str = "") -> None:
+    """Move a task to BLOCKED because it cannot go on on its own."""
+    with get_db() as conn:
+        current = _task_status(conn, task_id)
+    if current not in BLOCK_SOURCES:
+        raise ValueError(f"Cannot block task {task_id} in status {current}")
+    transition(task_id, "BLOCKED", actor=actor, reason=reason)
+
+
+def request_human(task_id: str, actor: str, reason: str = "") -> None:
+    """Move a task to NEEDS_HUMAN because a human has to take over."""
+    with get_db() as conn:
+        current = _task_status(conn, task_id)
+    if current not in HUMAN_SOURCES:
+        raise ValueError(f"Cannot request human for task {task_id} in status {current}")
+    transition(task_id, "NEEDS_HUMAN", actor=actor, reason=reason)
+
+
+def release_claim(task_id: str, actor: str, reason: str = "claim released") -> bool:
+    """Release the open claim of a task and return whether one was open.
+
+    The state machine has no CLAIMED -> READY edge, so releasing a claim is
+    bookkeeping only: claims.released_at is stamped and a self loop audit row
+    records it. The task status is left untouched on purpose. A task without
+    an open claim is not an error, it just returns False.
+    """
+    with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        task = conn.execute(
+            "SELECT status FROM tasks WHERE task_id=?", (task_id,)
+        ).fetchone()
+        if task is None:
+            conn.execute("ROLLBACK")
+            return False
+        claim = conn.execute(
+            "SELECT id FROM claims WHERE task_id=? AND released_at IS NULL "
+            "ORDER BY id DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        if claim is None:
+            conn.execute("ROLLBACK")
+            return False
+        conn.execute(
+            "UPDATE claims SET released_at=? WHERE id=?", (utcnow(), claim["id"])
+        )
+        detail = "" if reason == "claim released" else f": {reason}"
+        _audit(
+            conn, task_id, actor, task["status"], task["status"],
+            f"claim released{detail}",
+        )
+        conn.execute("COMMIT")
+    print(f"Released the claim of task {task_id}")
+    return True
+
+
+def add_evidence(task_id: str, kind: str, path: str, created_by: str,
+                 sha256: Optional[str] = None, sync_audit: bool = True) -> int:
+    """Store one evidence file for a task and return the new row id.
+
+    The kind is checked here, not only by the schema constraint, so the
+    value is guaranteed whatever database this runs against. With sync_audit
+    the newest audit row points at the same path, so the evidence is
+    reachable from the audit trail alone.
+    """
+    if kind not in EVIDENCE_KINDS:
+        raise ValueError(
+            f"Invalid evidence kind {kind!r}, expected one of {list(EVIDENCE_KINDS)}"
+        )
+    with get_db() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO task_evidence
+                (task_id, kind, path, sha256, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (task_id, kind, path, sha256, created_by, utcnow()),
+        )
+        evidence_id = cur.lastrowid
+        if sync_audit:
+            status = _task_status(conn, task_id)
+            _audit(
+                conn, task_id, created_by, status, status,
+                f"evidence:{kind}", evidence_path=path,
+            )
+    print(f"Evidence {kind} recorded for task {task_id}")
+    return evidence_id

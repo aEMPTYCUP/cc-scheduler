@@ -37,7 +37,7 @@
 | T-06 | ✅ passed | high | T-04 | 0 | 修 rowcount/UPSERT 两 bug + implementer 身份 |
 | T-07 | ✅ passed | high | T-06 | 0 | 自验收机械守卫 |
 | T-08 | ✅ passed | high | T-04 | 0 | 契约字段 + 依赖表 + select_next_task |
-| T-09 | ⬜ | high | T-05,T-06 | 0 | 失败处理 + task_evidence |
+| T-09 | ✅ passed | high | T-05,T-06 | 0 | 失败处理 + task_evidence |
 | T-10 | ⬜ | medium | 全部 | 0 | 全量回归 + 文档同步 |
 
 ---
