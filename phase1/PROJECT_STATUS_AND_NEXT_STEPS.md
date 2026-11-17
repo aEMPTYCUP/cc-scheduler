@@ -2,6 +2,61 @@
 
 这份文件给 Claude Code 和 Codex 实现用。目标是说明项目现在走到哪、接下来做什么、哪些事不能动。先把能跑的最小增量做出来，再优化。
 
+## 0. P1 完成状态（2026-11-17）
+
+P0/P1 的九个编码任务 T-01 ~ T-09 已全部完成并通过独立验收。协议层从“能跑通的最小链路”补平为“带迁移、带异常态、带守卫、带证据”的正式协议层。本节是**当前状态的权威描述**；下面第 2 ~ 6 节是历史记录，保留不删，与本节冲突的过时表述已就地更正。
+
+### 0.1 测试现状（实测，非估计）
+
+```
+.venv/Scripts/python.exe -m pytest phase1/tests -q
+86 passed in 9.17s
+```
+
+8 个测试文件、**86 条用例全绿，退出码 0**（上面的输出是实跑结果，耗时随机器波动）：
+
+| 文件 | 用例数 | 覆盖 |
+| --- | --- | --- |
+| `phase1/tests/test_smoke.py` | 1 | init → create → ready → claim → DONE 的完整链路 |
+| `phase1/tests/test_db_path.py` | 6 | `PHASE1_DB` / legacy / 临时目录三场景 + `get_db()` 建父目录 |
+| `phase1/tests/test_claim_and_role.py` | 9 | 领取竞态、角色 UPSERT、implementer 身份固化 |
+| `phase1/tests/test_state_machine.py` | 21 | 14 条新增合法边、3 条非法边、旧 10 态回归、`evidence_path` |
+| `phase1/tests/test_selection.py` | 21 | 契约字段、优先级排序、依赖门禁、`select_next_task` 只读 |
+| `phase1/tests/test_failure_and_evidence.py` | 14 | `record_failure` / `block_task` / `request_human` / `release_claim` / `add_evidence` |
+| `phase1/tests/test_independence_guard.py` | 7 | 自验收守卫拒绝 / 放行 / 局限声明 |
+| `phase1/tests/test_schema_migration.py` | 7 | fresh install、v0→v1 迁移、幂等、旧数据不丢 |
+
+CI（`.github/workflows/protocol-ci.yml`，工作流名 “Multi-Agent Protocol CI”）已改为真实跑 pytest：安装 `phase1/requirements-dev.txt`（`pytest>=8`），执行 `python -m pytest phase1/tests -q`，**没有 `|| true` 吞错**，测试失败工作流必红；`permissions` 收敛为 `contents: read`。
+
+### 0.2 T-01 ~ T-09 已交付能力
+
+| 任务 | 交付内容 | 落点 |
+| --- | --- | --- |
+| T-01 | 数据库路径单一来源：`_resolve_db_path()` 优先级为 `PHASE1_DB` 环境变量 > 已存在的 legacy `/tmp/phase1_protocol.db` > 系统临时目录 `%TEMP%/phase1/phase1_protocol.db`；`get_db()` 自动建父目录 | `phase1/protocol.py` |
+| T-02 | `.gitignore` 补全：`phase1/task-packages/`、`phase1/logs/`、`phase1/ui/data.json`、`phase1/ui/data.js`、`*.db`、`__pycache__/`、`.pytest_cache/` 退跟踪；`phase1/ui/demo_fallback.json` 保持被跟踪 | 根目录 `.gitignore` |
+| T-03 | pytest 骨架 + CI 改真跑测试：依赖落在 `phase1/requirements-dev.txt`；`conftest.py` 把 `basetemp` 重定向到系统 TEMP 下的私有目录，绕开本机被污染的 `pytest-of-<user>` | `phase1/tests/`、`.github/workflows/protocol-ci.yml` |
+| T-04 | schema v1 + `PRAGMA user_version` 幂等迁移：新表 `executors` / `task_dependencies` / `task_evidence`；`tasks` 新增 `priority` / `dependencies_json` / `executor_id` / `implementer_executor_id` / `retry_count` / `max_retries` / `allowed_paths_json` / `behavioral_check` / `pass_condition` / `last_error`；`audit_log` 新增 `evidence_path`；`claims.released_at` 启用 | `phase1/schema.sql`、`phase1/protocol.py` |
+| T-05 | 状态机三异常态 `FAILED` / `NEEDS_HUMAN` / `BLOCKED` 及其合法边（只加边、不删旧边）；`transition` 支持 `evidence_path` | `phase1/protocol.py` |
+| T-06 | 修两个既有 bug：`atomic_claim` 竞态判定改用 `cursor.rowcount`（不再用连接累计 `total_changes`）；`register_role` 改 `INSERT ... ON CONFLICT DO UPDATE` 原地更新。另加 `atomic_claim(executor_id=...)` 固化实现者身份 | `phase1/protocol.py` |
+| T-07 | 自验收机械守卫：`transition` 支持 `actor_executor_id`；REVIEW 态做 `ACCEPTED` / `REWORK` 时 reviewer == implementer 抛 `PermissionError`，拒绝记录以自环审计先 commit 再抛错 | `phase1/protocol.py` |
+| T-08 | 结构化验收契约 + 依赖表 + 选单：`create_task` 新增带默认值的 kwargs；依赖在创建时必须已存在；写 `task_dependencies` 与去重排序的 `dependencies_json`；`select_next_task()` 只读、依赖全 DONE 才合格、按 priority → created_at → task_id 排序 | `phase1/protocol.py`、`phase1/schema.sql` |
+| T-09 | 失败处理与证据：`record_failure`（`retry_count`+1、写 `last_error`，未超限落 `FAILED`、达 `max_retries` 落 `BLOCKED`，默认 3 次）、`block_task`、`request_human`、`release_claim`（只打 `claims.released_at`，不改任务状态）、`add_evidence`（kind 白名单 + 可选同步 `audit.evidence_path`） | `phase1/protocol.py` |
+
+### 0.3 三条线路的现状
+
+- **线路 C（协议层加固）：已基本完成。** T-04 ~ T-09 覆盖了它要求的 schema 迁移、审计证据字段、异常态与最小权限检查。**唯一没做**的是「领取任务时自动创建隔离 worktree 并在 DONE 后清理」——`protocol.create_worktree` / `remove_worktree` 仍是手动调用。
+- **线路 A（看板 UI）：仍未做。** 看板还是 Phase 1 的静态导出 + 本地服务：没有任务创建表单，没有状态机可视化时间线。按 `PHASE_2_REPLACEMENT.md` 第 7 节，线路 A 不在接班关键路径上，降级为并行的可视层；P4 割接后它会成为观察内核的主要窗口。
+- **线路 B（真实执行器接入）：仍未做。** `phase1/scripts/claude_adapter.py`、`phase1/scripts/cursor_adapter.py` 仍是骨架，真实 CLI 调用、超时、日志落盘、重试与人工接管都没落地。按 `PHASE_2_REPLACEMENT.md` 的路线图，这一块归到 **P2（真实执行器 + 验收门禁）**，其后是 **P3（编排循环 orchestrator driver）** 与 **P4（影子运行 → 割接 → 退役）**；P2 的首要适配器按该文件要求由 claude/cursor 调整为 **codex**。
+
+### 0.4 已知局限（如实保留，不要在文档里夸大）
+
+- 自验收守卫只能做**字符串级** `actor != implementer` 校验：A7 要求的“独立新会话、不 resume 实现者对话”**无法由状态机机械证明**，只能靠岗位纪律加审计声明。
+- 迁移库（v0→v1）的新列**没有库级 CHECK**（SQLite `ALTER TABLE ADD COLUMN` 不支持附带 CHECK），合法性靠应用层校验；只有 fresh install 才带完整 CHECK。
+- `release_claim` 只打 `claims.released_at`，不改任务状态——状态机没有 `CLAIMED → READY` 边。
+- `create_task` 的依赖**不支持前向引用、不支持自依赖**：被依赖任务必须先存在。
+
+下一阶段看 `PHASE_2_REPLACEMENT.md` 的 P2 / P3 / P4。
+
 ## 1. 项目目标（一句话 + 核心原则）
 
 **一句话：** 不是再造一套 AI 编程工具，而是把已经在用的 Claude Code、Codex、Cursor、豆包统一调度起来，用同一套任务池、同一套岗位规范和同一套验收标准干活。
@@ -15,13 +70,13 @@
 
 ## 2. 当前已完成（Phase 1 + 1.5 + 最小 UI）
 
-仓库在 `phase1/`。默认数据库是 `/tmp/phase1_protocol.db`。下面这些已经落地，并且多数已经跑通过，实现时请先复用，不要推倒重来。
+仓库在 `phase1/`。数据库路径不再写死 `/tmp`：`protocol._resolve_db_path()` 的优先级是 `PHASE1_DB` 环境变量 > 已存在的 legacy `/tmp/phase1_protocol.db` > 系统临时目录 `%TEMP%/phase1/phase1_protocol.db`，`get_db()` 会自动建父目录。下面这些已经落地，并且多数已经跑通过，实现时请先复用，不要推倒重来。
 
 ### 协议层
 
 - `phase1/protocol.py`：任务创建、READY、原子领取、状态流转、任务包生成、审计写入、worktree 绑定。
-- `phase1/schema.sql`：`role_specs`、`tasks`、`audit_log`、`claims`。
-- 状态机：`BACKLOG → READY → CLAIMED → IN_PROGRESS → SUBMITTED → REVIEW → (ACCEPTED | REWORK) → INTEGRATION → (REVIEW | DONE)`。`REWORK` 可以回到 `CLAIMED` 或 `IN_PROGRESS`。
+- `phase1/schema.sql`：`role_specs`、`tasks`、`audit_log`、`claims`；P1 新增 `executors`、`task_dependencies`、`task_evidence` 三张表，以及 `tasks` / `audit_log` 的新列（见第 0 节与 `P1_SCHEMA_DESIGN.md` 第 3、4 节）。
+- 状态机：`BACKLOG → READY → CLAIMED → IN_PROGRESS → SUBMITTED → REVIEW → (ACCEPTED | REWORK) → INTEGRATION → (REVIEW | DONE)`。`REWORK` 可以回到 `CLAIMED` 或 `IN_PROGRESS`。P1 在原有 10 态上增量加入 `FAILED`、`NEEDS_HUMAN`、`BLOCKED` 三个异常态，旧边一条未删。
 - 任务包写在 `phase1/task-packages/<task_id>/`，至少包含 `ROLE_SPEC.md` 和 `manifest.json`（含 `role_spec_sha256`）。
 - 所有状态变化都写 `audit_log`。本地已做过端到端验证：任务可以从创建走到 `DONE`，审计链路完整。
 - 命令入口：`phase1/cli.py`。
@@ -45,8 +100,8 @@
 ### CI
 
 - `.github/workflows/protocol-ci.yml`，工作流名是 “Multi-Agent Protocol CI”。
-- 已在 `workflow_dispatch` 且 `simulate=true` 下跑通，产物为 `protocol-audit`。
-- 这只证明协议模拟链路能在 CI 里走完，不代表真实 CLI 已经在 CI 里跑通。
+- **P1 起改为真实跑测试**：安装 `phase1/requirements-dev.txt`（`pytest>=8`），执行 `python -m pytest phase1/tests -q`，没有 `|| true` 吞错，测试失败工作流必红；`permissions` 收敛为 `contents: read`。
+- 仍然没有真实 CLI 调用进入 CI：这条链路只证明协议层测试在 CI 里过，不代表真实 CLI 已经在 CI 里跑通。
 
 ### 最小看板
 
@@ -91,6 +146,8 @@ A0 调度立项
 
 ### 线路 A：完善 UI（最优先，用户可见）
 
+> **现状（2026-11-17）：仍未做。** 看板还是 Phase 1 的静态导出 + 本地服务（`export_for_ui.py` / `ui_server.py` / `mark_submitted.py`）。下面列的「任务创建表单」与「状态机可视化时间线」都还没有实现。按 `PHASE_2_REPLACEMENT.md` 第 7 节，线路 A 不在接班关键路径上，降级为并行的可视层。
+
 文件主要在 `phase1/ui/` 和 `phase1/scripts/export_for_ui.py`、`phase1/scripts/ui_server.py`。
 
 已经有雏形、只需打磨补齐的：
@@ -107,6 +164,8 @@ A0 调度立项
 
 ### 线路 B：真实执行器接入（Phase 2 骨架）
 
+> **现状（2026-11-17）：仍未做。** `claude_adapter.py` / `cursor_adapter.py` 仍是骨架，真实 CLI 调用、超时、日志落盘、重试与人工接管都没落地。按 `PHASE_2_REPLACEMENT.md` 的路线图，这部分归到 **P2（真实执行器 + 验收门禁）**，其后是 **P3（编排循环）** 与 **P4（影子运行 → 割接 → 退役）**；P2 的首要适配器按该文件要求由 claude/cursor 调整为 **codex**。
+
 文件主要在 `phase1/scripts/claude_adapter.py`、`phase1/scripts/cursor_adapter.py`。如需 Codex，可按同样风格新增适配器，不要另起一套状态机。
 
 要做的事：
@@ -121,13 +180,15 @@ A0 调度立项
 
 ### 线路 C：协议层加固
 
+> **现状（2026-11-17）：本线路已基本由 T-04 ~ T-09 落地**，交付内容见第 0 节。下面三条里：「简单的权限检查」已完成（T-07 自验收守卫）；「审计证据文件落盘」目前只完成协议层部分（`audit_log.evidence_path` + `task_evidence` + `add_evidence`），把真实 CLI 的 stdout/stderr 落盘到 `task-packages/<id>/logs/` 属于 P2；「Worktree 与任务绑定自动化」仍未做。
+
 文件主要在 `phase1/protocol.py`、`phase1/scripts/worktree.py`、必要时小幅扩展 `schema.sql`。改协议层时必须保持现有函数签名和行为兼容，`cli.py`、适配器、看板脚本都依赖它们。
 
 要做的事：
 
-- **Worktree 与任务绑定自动化。** 领取任务时，按约定自动创建隔离 worktree，并把路径写入 `tasks.worktree_path`。任务 `DONE`（或确认废弃）后按规则清理。失败要写进审计，不要留下找不到的脏目录却不记录。
-- **审计证据文件落盘。** `audit_log.evidence` 现在可以写文本。请再落到文件，例如 CLI 日志路径、提交 SHA、任务包哈希，让 A7 打开就能核对。证据路径写进审计记录，文件本身不要进无关的 git 提交，除非文档明确要求。
-- **简单的权限检查。** 最低要求：实现者不能验收自己的工作；以 A7 身份做 `ACCEPTED` / `REWORK` 时，不能和该任务的实现者是同一个 actor。这一条先做成明确、可测试的规则，不要上复杂的权限系统。
+- **Worktree 与任务绑定自动化。**（⏳ 未做：`create_worktree` / `remove_worktree` 仍是手动调用）
+- **审计证据文件落盘。**（✅ 协议层部分已完成：`audit_log.evidence_path` + `task_evidence`；真实 CLI 日志落盘属 P2）
+- **简单的权限检查。**（✅ 已完成，见第 0 节 T-07；仅字符串级守卫）
 
 ## 5. 给实现者的注意事项
 
@@ -139,6 +200,8 @@ A0 调度立项
 - **文档和代码一起改。** 行为变了，就更新本文件和 `phase1/README.md`。
 
 ## 6. 验收标准（本轮）
+
+> **现状（2026-11-17）：本轮三条验收标准中，第 3 条（文档与代码同步更新）已由 T-10 落实；第 1 条（看板创建表单与状态时间线）属于线路 A，第 2 条（真实 CLI 路径）属于线路 B，两条均未完成，排序见 `PHASE_2_REPLACEMENT.md` 的 P2 / P3 / P4。
 
 这轮做完，至少要同时满足下面三条：
 
