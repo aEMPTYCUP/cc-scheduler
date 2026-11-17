@@ -1,0 +1,2 @@
+# Test-time dependencies for the Phase 1 protocol layer.
+pytest>=8
