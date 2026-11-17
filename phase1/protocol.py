@@ -32,6 +32,39 @@ def _resolve_db_path() -> Path:
 
 DB_PATH = _resolve_db_path()
 
+SCHEMA_VERSION = 1
+
+# Controlled executors seeded into every v1 database (fresh install and
+# migration alike). Mirrors the seed table of P1_SCHEMA_DESIGN.md section 3.
+_EXECUTOR_SEED = (
+    ("doubao", "豆包(人工复制粘贴)", "doubao", None),
+    ("codex", "Codex CLI", "codex", "OPENAI_BASE_URL"),
+    ("claude", "Claude Code", "claude", "ANTHROPIC_BASE_URL"),
+    ("cursor", "Cursor CLI", "cursor", None),
+    ("human", "人工接管", "human", None),
+)
+
+# Tables that already exist in a v0 (pre-P1) database.
+_V0_TABLES = ("role_specs", "tasks", "audit_log", "claims")
+
+# Columns the v0 -> v1 migration adds to the existing tables. SQLite cannot
+# attach a CHECK constraint to a column added with ALTER TABLE, so a migrated
+# database carries no library level CHECK on these columns; only a fresh
+# install (schema.sql) gets the full v1 constraints.
+_V1_ADDED_COLUMNS = (
+    "ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'medium'",
+    "ALTER TABLE tasks ADD COLUMN dependencies_json TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE tasks ADD COLUMN executor_id TEXT",
+    "ALTER TABLE tasks ADD COLUMN implementer_executor_id TEXT",
+    "ALTER TABLE tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE tasks ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 3",
+    "ALTER TABLE tasks ADD COLUMN allowed_paths_json TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE tasks ADD COLUMN behavioral_check TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE tasks ADD COLUMN pass_condition TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE tasks ADD COLUMN last_error TEXT",
+    "ALTER TABLE audit_log ADD COLUMN evidence_path TEXT",
+)
+
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -46,10 +79,64 @@ def get_db() -> sqlite3.Connection:
     return conn
 
 
-def init_db():
-    schema = (Path(__file__).parent / "schema.sql").read_text()
+def _schema_sql() -> str:
+    return (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
+
+
+def _is_fresh_database(conn: sqlite3.Connection) -> bool:
+    """True when the database carries none of the v0 business tables."""
+    placeholders = ",".join("?" * len(_V0_TABLES))
+    count = conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' "
+        f"AND name IN ({placeholders})",
+        _V0_TABLES,
+    ).fetchone()[0]
+    return count == 0
+
+
+def _migrate_v0_to_v1(conn: sqlite3.Connection) -> None:
+    """Upgrade a v0 database to v1 — additions only, nothing is dropped."""
+    # The CREATE TABLE IF NOT EXISTS statements of the v1 schema are no-ops
+    # for the tables that already exist, so they only add what is missing
+    # (executors / task_dependencies / task_evidence) plus the indexes.
+    conn.executescript(_schema_sql())
+    for statement in _V1_ADDED_COLUMNS:
+        try:
+            conn.execute(statement)
+        except sqlite3.OperationalError:
+            # Column already exists -> re-running the migration is a no-op.
+            pass
+
+
+def _seed_executors(conn: sqlite3.Connection) -> None:
+    """Insert the controlled executors; rows that already exist are kept."""
+    now = utcnow()
+    conn.executemany(
+        "INSERT OR IGNORE INTO executors "
+        "(executor_id, label, kind, endpoint_env, active, created_at) "
+        "VALUES (?, ?, ?, ?, 1, ?)",
+        [(executor_id, label, kind, endpoint_env, now)
+         for executor_id, label, kind, endpoint_env in _EXECUTOR_SEED],
+    )
+
+
+def ensure_schema() -> None:
+    """Bring the database up to SCHEMA_VERSION. Safe to call repeatedly."""
     with get_db() as conn:
-        conn.executescript(schema)
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version >= SCHEMA_VERSION:
+            return
+        if _is_fresh_database(conn):
+            conn.executescript(_schema_sql())
+        else:
+            _migrate_v0_to_v1(conn)
+        _seed_executors(conn)
+        conn.commit()
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+
+def init_db():
+    ensure_schema()
     print(f"DB initialized at {DB_PATH}")
 
 

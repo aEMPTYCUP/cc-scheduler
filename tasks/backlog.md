@@ -27,7 +27,7 @@
 | T-01 | ✅ passed | high | — | 0 | DB 路径单一来源 + PHASE1_DB env |
 | T-02 | ✅ passed | medium | T-01 | 0 | .gitignore 补全与生成物退跟踪 |
 | T-03 | ✅ passed | high | T-01 | 0 | pytest 骨架 + CI 改真跑测试 |
-| T-04 | ⬜ | high | T-03 | 0 | schema v1 + user_version 幂等迁移 |
+| T-04 | ✅ passed | high | T-03 | 0 | schema v1 + user_version 幂等迁移 |
 | T-05 | ⬜ | high | T-04 | 0 | 状态机三异常态 + evidence_path |
 | T-06 | ⬜ | high | T-04 | 0 | 修 rowcount/UPSERT 两 bug + implementer 身份 |
 | T-07 | ⬜ | high | T-06 | 0 | 自验收机械守卫 |
