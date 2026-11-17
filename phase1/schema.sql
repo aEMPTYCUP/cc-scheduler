@@ -97,3 +97,30 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_audit_task ON audit_log(task_id);
 CREATE INDEX IF NOT EXISTS idx_deps_task ON task_dependencies(task_id);
 CREATE INDEX IF NOT EXISTS idx_evidence_task ON task_evidence(task_id);
+
+-- ↓↓↓ v2: orchestration console (per-node capability switches + GO sessions) ↓↓↓
+
+-- Which work NODE each executor is allowed to run. `locked` rows cannot be
+-- toggled from the UI (e.g. Doubao is coding-only: acceptance is locked off).
+CREATE TABLE IF NOT EXISTS executor_capabilities (
+    executor_id TEXT NOT NULL REFERENCES executors(executor_id),
+    node TEXT NOT NULL CHECK (node IN ('implement', 'acceptance')),
+    enabled INTEGER NOT NULL DEFAULT 0,
+    locked INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (executor_id, node)
+);
+
+-- Live GO/STOP state of one (executor, node) worker. The board supervisor
+-- ticks every running session; current_task_id/last_heartbeat drive the UI.
+CREATE TABLE IF NOT EXISTS worker_sessions (
+    executor_id TEXT NOT NULL,
+    node TEXT NOT NULL,
+    running INTEGER NOT NULL DEFAULT 0,
+    current_task_id TEXT,
+    last_heartbeat TEXT,
+    last_result TEXT,
+    started_at TEXT,
+    stopped_at TEXT,
+    PRIMARY KEY (executor_id, node)
+);

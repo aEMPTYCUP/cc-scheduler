@@ -167,8 +167,8 @@ def test_fresh_install_creates_the_full_v1_schema(db_path: Path) -> None:
         assert "released_at" in _columns(conn, "claims")
         assert V1_INDEXES <= _indexes(conn)
 
-        assert protocol.SCHEMA_VERSION == 1
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert protocol.SCHEMA_VERSION == 2
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == protocol.SCHEMA_VERSION
 
         executors = conn.execute(
             "SELECT executor_id, kind, active FROM executors ORDER BY executor_id"
@@ -242,7 +242,7 @@ def test_v0_database_is_migrated_to_v1(db_path: Path) -> None:
         assert {"executors", "task_dependencies", "task_evidence"} <= _tables(conn)
         assert V1_INDEXES <= _indexes(conn)
 
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == protocol.SCHEMA_VERSION
         executors = conn.execute(
             "SELECT executor_id, active FROM executors ORDER BY executor_id"
         ).fetchall()
@@ -269,7 +269,7 @@ def test_ensure_schema_is_idempotent(db_path: Path) -> None:
     protocol.ensure_schema()
 
     with closing(_connect(db_path)) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == protocol.SCHEMA_VERSION
         assert conn.execute("SELECT COUNT(*) FROM executors").fetchone()[0] == 5
         assert conn.execute(
             "SELECT COUNT(DISTINCT executor_id) FROM executors"
@@ -283,7 +283,7 @@ def test_ensure_schema_after_migration_keeps_the_old_data(db_path: Path) -> None
     protocol.ensure_schema()
 
     with closing(_connect(db_path)) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == protocol.SCHEMA_VERSION
         assert conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0] == 2
         assert conn.execute("SELECT COUNT(*) FROM executors").fetchone()[0] == 5
@@ -299,6 +299,6 @@ def test_init_db_delegates_to_ensure_schema(db_path: Path, capsys) -> None:
     assert f"DB initialized at {db_path}" in captured.out
 
     with closing(_connect(db_path)) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == protocol.SCHEMA_VERSION
         assert V1_TABLES <= _tables(conn)
         assert conn.execute("SELECT COUNT(*) FROM executors").fetchone()[0] == 5

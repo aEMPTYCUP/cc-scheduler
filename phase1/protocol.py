@@ -32,7 +32,7 @@ def _resolve_db_path() -> Path:
 
 DB_PATH = _resolve_db_path()
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Review decisions that require an independent reviewer
 # (P1_SCHEMA_DESIGN.md section 6.2): the implementer of a task may
@@ -73,6 +73,45 @@ _V1_ADDED_COLUMNS = (
     "ALTER TABLE tasks ADD COLUMN last_error TEXT",
     "ALTER TABLE audit_log ADD COLUMN evidence_path TEXT",
 )
+
+# v2 work nodes an executor can be enabled for.
+NODES = ("implement", "acceptance")
+NODE_LABELS = {"implement": "编程", "acceptance": "验收"}
+
+# Idempotent v1 -> v2 table creation (mirrors the tail of schema.sql). SQLite
+# has no "ADD TABLE IF MISSING" beyond CREATE TABLE IF NOT EXISTS, so the same
+# statement is safe on a fresh database and an older one alike.
+_V2_TABLES_SQL = """
+CREATE TABLE IF NOT EXISTS executor_capabilities (
+    executor_id TEXT NOT NULL REFERENCES executors(executor_id),
+    node TEXT NOT NULL CHECK (node IN ('implement', 'acceptance')),
+    enabled INTEGER NOT NULL DEFAULT 0,
+    locked INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (executor_id, node)
+);
+CREATE TABLE IF NOT EXISTS worker_sessions (
+    executor_id TEXT NOT NULL,
+    node TEXT NOT NULL,
+    running INTEGER NOT NULL DEFAULT 0,
+    current_task_id TEXT,
+    last_heartbeat TEXT,
+    last_result TEXT,
+    started_at TEXT,
+    stopped_at TEXT,
+    PRIMARY KEY (executor_id, node)
+);
+"""
+
+# Default (enabled, locked) per executor and node. Doubao is coding-only: its
+# acceptance switch exists but is locked off and can never be turned on.
+_DEFAULT_CAPABILITIES = {
+    "doubao": {"implement": (1, 0), "acceptance": (0, 1)},
+    "codex": {"implement": (1, 0), "acceptance": (0, 0)},
+    "claude": {"implement": (1, 0), "acceptance": (1, 0)},
+    "cursor": {"implement": (1, 0), "acceptance": (0, 0)},
+    "human": {"implement": (0, 0), "acceptance": (0, 0)},
+}
 
 
 def utcnow() -> str:
@@ -129,6 +168,28 @@ def _seed_executors(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
+    """Add the orchestration-console tables. Additions only, nothing dropped."""
+    conn.executescript(_V2_TABLES_SQL)
+
+
+def _seed_capabilities(conn: sqlite3.Connection) -> None:
+    """Seed per-node capability defaults; existing toggles are preserved."""
+    now = utcnow()
+    rows = []
+    known = {r[0] for r in conn.execute("SELECT executor_id FROM executors").fetchall()}
+    for executor_id, nodes in _DEFAULT_CAPABILITIES.items():
+        if executor_id not in known:
+            continue
+        for node, (enabled, locked) in nodes.items():
+            rows.append((executor_id, node, enabled, locked, now))
+    conn.executemany(
+        "INSERT OR IGNORE INTO executor_capabilities "
+        "(executor_id, node, enabled, locked, updated_at) VALUES (?, ?, ?, ?, ?)",
+        rows,
+    )
+
+
 def ensure_schema() -> None:
     """Bring the database up to SCHEMA_VERSION. Safe to call repeatedly."""
     with get_db() as conn:
@@ -139,7 +200,10 @@ def ensure_schema() -> None:
             conn.executescript(_schema_sql())
         else:
             _migrate_v0_to_v1(conn)
+            if version < 2:
+                _migrate_v1_to_v2(conn)
         _seed_executors(conn)
+        _seed_capabilities(conn)
         conn.commit()
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
