@@ -32,7 +32,7 @@ def _resolve_db_path() -> Path:
 
 DB_PATH = _resolve_db_path()
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Review decisions that require an independent reviewer
 # (P1_SCHEMA_DESIGN.md section 6.2): the implementer of a task may
@@ -74,9 +74,9 @@ _V1_ADDED_COLUMNS = (
     "ALTER TABLE audit_log ADD COLUMN evidence_path TEXT",
 )
 
-# v2 work nodes an executor can be enabled for.
-NODES = ("implement", "acceptance")
-NODE_LABELS = {"implement": "编程", "acceptance": "验收"}
+# Work nodes an executor can be enabled for. v3 adds `integrate` (A8 merge).
+NODES = ("implement", "acceptance", "integrate")
+NODE_LABELS = {"implement": "编程", "acceptance": "验收", "integrate": "集成"}
 
 # Idempotent v1 -> v2 table creation (mirrors the tail of schema.sql). SQLite
 # has no "ADD TABLE IF MISSING" beyond CREATE TABLE IF NOT EXISTS, so the same
@@ -104,13 +104,14 @@ CREATE TABLE IF NOT EXISTS worker_sessions (
 """
 
 # Default (enabled, locked) per executor and node. Doubao is coding-only: its
-# acceptance switch exists but is locked off and can never be turned on.
+# acceptance and integration switches exist but are locked off and can never be
+# turned on. Claude owns integration (A8): its integrate switch is on by default.
 _DEFAULT_CAPABILITIES = {
-    "doubao": {"implement": (1, 0), "acceptance": (0, 1)},
-    "codex": {"implement": (1, 0), "acceptance": (0, 0)},
-    "claude": {"implement": (1, 0), "acceptance": (1, 0)},
-    "cursor": {"implement": (1, 0), "acceptance": (0, 0)},
-    "human": {"implement": (0, 0), "acceptance": (0, 0)},
+    "doubao": {"implement": (1, 0), "acceptance": (0, 1), "integrate": (0, 1)},
+    "codex": {"implement": (1, 0), "acceptance": (0, 0), "integrate": (0, 0)},
+    "claude": {"implement": (1, 0), "acceptance": (1, 0), "integrate": (1, 0)},
+    "cursor": {"implement": (1, 0), "acceptance": (0, 0), "integrate": (0, 0)},
+    "human": {"implement": (0, 0), "acceptance": (0, 0), "integrate": (0, 0)},
 }
 
 
@@ -173,6 +174,29 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
     conn.executescript(_V2_TABLES_SQL)
 
 
+# v3 widens the node CHECK to include 'integrate'. SQLite cannot ALTER a CHECK
+# constraint, so the capability table is rebuilt (no table references it by FK).
+_V3_CAPABILITIES_REBUILD_SQL = """
+CREATE TABLE executor_capabilities_v3 (
+    executor_id TEXT NOT NULL REFERENCES executors(executor_id),
+    node TEXT NOT NULL CHECK (node IN ('implement', 'acceptance', 'integrate')),
+    enabled INTEGER NOT NULL DEFAULT 0,
+    locked INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (executor_id, node)
+);
+INSERT INTO executor_capabilities_v3 (executor_id, node, enabled, locked, updated_at)
+    SELECT executor_id, node, enabled, locked, updated_at FROM executor_capabilities;
+DROP TABLE executor_capabilities;
+ALTER TABLE executor_capabilities_v3 RENAME TO executor_capabilities;
+"""
+
+
+def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
+    """Widen the node domain to include the integration node (table rebuild)."""
+    conn.executescript(_V3_CAPABILITIES_REBUILD_SQL)
+
+
 def _seed_capabilities(conn: sqlite3.Connection) -> None:
     """Seed per-node capability defaults; existing toggles are preserved."""
     now = utcnow()
@@ -202,6 +226,8 @@ def ensure_schema() -> None:
             _migrate_v0_to_v1(conn)
             if version < 2:
                 _migrate_v1_to_v2(conn)
+            if version < 3:
+                _migrate_v2_to_v3(conn)
         _seed_executors(conn)
         _seed_capabilities(conn)
         conn.commit()

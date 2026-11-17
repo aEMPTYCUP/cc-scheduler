@@ -104,7 +104,7 @@ CREATE INDEX IF NOT EXISTS idx_evidence_task ON task_evidence(task_id);
 -- toggled from the UI (e.g. Doubao is coding-only: acceptance is locked off).
 CREATE TABLE IF NOT EXISTS executor_capabilities (
     executor_id TEXT NOT NULL REFERENCES executors(executor_id),
-    node TEXT NOT NULL CHECK (node IN ('implement', 'acceptance')),
+    node TEXT NOT NULL CHECK (node IN ('implement', 'acceptance', 'integrate')),
     enabled INTEGER NOT NULL DEFAULT 0,
     locked INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL,

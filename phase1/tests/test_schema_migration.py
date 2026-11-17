@@ -167,7 +167,7 @@ def test_fresh_install_creates_the_full_v1_schema(db_path: Path) -> None:
         assert "released_at" in _columns(conn, "claims")
         assert V1_INDEXES <= _indexes(conn)
 
-        assert protocol.SCHEMA_VERSION == 2
+        assert protocol.SCHEMA_VERSION == 3
         assert conn.execute("PRAGMA user_version").fetchone()[0] == protocol.SCHEMA_VERSION
 
         executors = conn.execute(

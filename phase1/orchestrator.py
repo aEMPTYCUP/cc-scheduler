@@ -217,8 +217,11 @@ def _touch(executor_id: str, node: str, **fields: Any) -> None:
 def select_next_task_for_node(node: str, executor_id: str) -> Optional[Dict[str, Any]]:
     """Read-only next eligible task for a node, or None.
 
-    implement -> READY tasks whose dependencies are all DONE (kernel rule).
+    implement  -> READY tasks whose dependencies are all DONE (kernel rule).
     acceptance -> REVIEW tasks the executor did not implement (self-audit guard).
+    integrate  -> ACCEPTED tasks waiting for a controlled merge (A8). Only an
+                  ACCEPTED task is eligible; the auto loop never reaches merge
+                  without the explicit integration node being started.
     A disabled capability yields None before any SQL runs.
     """
     if node not in NODES:
@@ -241,7 +244,7 @@ def select_next_task_for_node(node: str, executor_id: str) -> Optional[Dict[str,
                 ORDER BY {_ORDER} LIMIT 1
                 """
             ).fetchone()
-        else:
+        elif node == "acceptance":
             row = conn.execute(
                 f"""
                 SELECT t.* FROM tasks t
@@ -251,6 +254,14 @@ def select_next_task_for_node(node: str, executor_id: str) -> Optional[Dict[str,
                 ORDER BY {_ORDER} LIMIT 1
                 """,
                 (executor_id, executor_id),
+            ).fetchone()
+        else:  # integrate
+            row = conn.execute(
+                f"""
+                SELECT t.* FROM tasks t
+                WHERE t.status='ACCEPTED'
+                ORDER BY {_ORDER} LIMIT 1
+                """
             ).fetchone()
         return dict(row) if row else None
 
@@ -266,6 +277,9 @@ class WorkerAdapter:
         raise NotImplementedError
 
     def accept(self, task: Dict[str, Any], executor_id: str) -> str:
+        raise NotImplementedError
+
+    def integrate(self, task: Dict[str, Any], executor_id: str) -> str:
         raise NotImplementedError
 
 
@@ -310,6 +324,104 @@ class SimulatedAdapter(WorkerAdapter):
                             actor_executor_id=executor_id)
         return f"{tid} acceptance decision {self.acceptance_verdict}"
 
+    def integrate(self, task: Dict[str, Any], executor_id: str) -> str:
+        """State-only integration for the demo (no real git in the simulation)."""
+        tid = task["task_id"]
+        if self.step_delay:
+            time.sleep(self.step_delay)
+        protocol.transition(tid, "INTEGRATION", executor_id,
+                            "sim: begin controlled integration",
+                            actor_executor_id=executor_id)
+        protocol.transition(tid, "DONE", executor_id,
+                            "sim: integration complete", actor_executor_id=executor_id)
+        return f"{tid} integrated (simulated) and moved to DONE"
+
+
+class GitIntegrationAdapter(WorkerAdapter):
+    """Real A8 integration: merge an accepted task branch into the target branch.
+
+    Unlike the simulation this runs real, local, reversible git operations. It
+    never pushes and never touches the formal queue. On a clean fast-forwardable
+    merge it runs the optional post-merge check, records the merge commit as
+    evidence and drives ACCEPTED -> INTEGRATION -> DONE. On a conflict or a
+    failing post-merge check it aborts the merge and returns the task to REVIEW
+    (the state machine's INTEGRATION -> REVIEW edge) with evidence instead of
+    silently fixing business code.
+    """
+
+    def __init__(self, repo_path: str, target_branch: str = "main",
+                 check_command: str = "", remote_push: bool = False) -> None:
+        self.repo_path = str(repo_path)
+        self.target_branch = target_branch
+        self.check_command = check_command
+        self.remote_push = remote_push  # reserved; pushing stays explicitly off
+
+    def _git(self, *args: str) -> "subprocess.CompletedProcess":
+        import subprocess
+        return subprocess.run(
+            ["git", *args], cwd=self.repo_path, capture_output=True, text=True,
+        )
+
+    def implement(self, task, executor_id: str) -> str:
+        raise PermissionError("the integration adapter cannot implement tasks")
+
+    def accept(self, task, executor_id: str) -> str:
+        raise PermissionError("the integration adapter cannot accept tasks")
+
+    def integrate(self, task: Dict[str, Any], executor_id: str) -> str:
+        tid = task["task_id"]
+        worktree = task.get("worktree_path")
+        if not worktree:
+            raise ValueError(f"task {tid} has no worktree_path; nothing real to merge")
+        branch = self._git("-C", worktree, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        if not branch or branch == "HEAD":
+            raise ValueError(f"task {tid} worktree is not on a named branch")
+
+        protocol.transition(tid, "INTEGRATION", executor_id,
+                            f"A8: merging {branch} into {self.target_branch}",
+                            actor_executor_id=executor_id)
+        try:
+            self._git("checkout", self.target_branch)
+            merge = self._git("merge", "--no-ff", branch, "-m",
+                              f"Merge task {tid} ({branch}) into {self.target_branch}")
+            if merge.returncode != 0:
+                self._git("merge", "--abort")
+                self._send_back_to_review(tid, executor_id,
+                                          f"merge conflict: {merge.stderr.strip()[:300]}")
+                return f"{tid} conflict -> sent back to REVIEW"
+            if self.check_command:
+                import subprocess
+                check = subprocess.run(self.check_command, cwd=self.repo_path,
+                                       shell=True, capture_output=True, text=True)
+                if check.returncode != 0:
+                    self._git("reset", "--hard", "ORIG_HEAD")
+                    self._send_back_to_review(
+                        tid, executor_id,
+                        f"post-merge check failed rc={check.returncode}: "
+                        f"{check.stdout[-200:]} {check.stderr[-200:]}")
+                    return f"{tid} failed checks -> sent back to REVIEW"
+            head = self._git("rev-parse", "HEAD").stdout.strip()
+            protocol.add_evidence(tid, "commit_sha", head, executor_id,
+                                  sha256=head, sync_audit=False)
+            protocol.transition(tid, "DONE", executor_id,
+                                f"A8: merged {branch} -> {self.target_branch} ({head[:10]})",
+                                evidence_path=f"commit:{head}",
+                                actor_executor_id=executor_id)
+            return f"{tid} merged into {self.target_branch} as {head[:10]} -> DONE"
+        except Exception as exc:  # noqa: BLE001 - never leave a half-merged tree
+            self._git("merge", "--abort")
+            self._send_back_to_review(tid, executor_id, f"integration error: {exc}")
+            return f"{tid} integration error -> sent back to REVIEW"
+
+    def _send_back_to_review(self, tid: str, executor_id: str, reason: str) -> None:
+        # INTEGRATION -> REVIEW is a legal edge; re-review is required before retry.
+        task = protocol.get_task(tid)
+        if task and task["status"] == "INTEGRATION":
+            protocol.transition(tid, "REVIEW", executor_id, reason,
+                                actor_executor_id=executor_id)
+        else:
+            protocol.block_task(tid, executor_id, reason)
+
 
 # --------------------------------------------------------------------------- #
 # worker loop
@@ -339,8 +451,10 @@ def run_worker_once(executor_id: str, node: str,
     try:
         if node == "implement":
             summary = adapter.implement(task, executor_id)
-        else:
+        elif node == "acceptance":
             summary = adapter.accept(task, executor_id)
+        else:  # integrate
+            summary = adapter.integrate(task, executor_id)
     except PermissionError as exc:  # self-acceptance backstop / policy refusal
         _touch(executor_id, node, current_task_id=None,
                last_heartbeat=protocol.utcnow(), last_result=f"blocked: {exc}")
