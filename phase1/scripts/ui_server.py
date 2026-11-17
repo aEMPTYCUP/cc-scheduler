@@ -101,6 +101,9 @@ class BoardHandler(SimpleHTTPRequestHandler):
                 result = {"task_id": task["task_id"], "status": task["status"]}
             elif path == "/api/reset-demo":
                 result = {"seeded": orchestrator.seed_demo_pool()}
+            elif path == "/api/sim-config":
+                delay = float(body.get("step_delay", 0))
+                result = {"sim_step_delay": orchestrator.set_sim_step_delay(delay)}
             elif path == "/api/submit":
                 task_id = (body.get("task_id") or "").strip()
                 actor = (body.get("actor") or "board-operator").strip() or "board-operator"
@@ -133,8 +136,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-supervisor", action="store_true",
                         help="Do not start the background worker supervisor (tests)")
+    parser.add_argument("--sim-step-delay", type=float, default=1.5,
+                        help="Seconds a simulated worker lingers per node (0 = instant; tests stay instant)")
     args = parser.parse_args(argv)
 
+    orchestrator.set_sim_step_delay(args.sim_step_delay)
     orchestrator.ensure_orchestrator()
     db = _db_path()
     if db.exists():

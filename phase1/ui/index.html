@@ -73,6 +73,23 @@
   .empty { color:#56607a; font-size:12px; text-align:center; padding:14px 0; }
   .hint { color:var(--muted); font-size:12px; margin-top:14px; }
   .hint code { background:var(--panel2); padding:1px 6px; border-radius:6px; }
+  header label.speed { font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; }
+  header label.speed select { min-width:0; padding:5px 8px; }
+  .feed { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px 18px; margin-top:22px; }
+  .feed h2 { margin:0 0 10px; font-size:15px; display:flex; justify-content:space-between; }
+  .feed h2 .sub { color:var(--muted); font-size:12px; font-weight:400; }
+  .feed table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  .feed td { padding:5px 8px; border-bottom:1px solid var(--line); color:var(--muted); white-space:nowrap; }
+  .feed td.reason { white-space:normal; color:var(--text); }
+  .feed tr.flash td { background:#21304d; }
+  .actor-pill { padding:2px 8px; border-radius:20px; font-weight:600; font-size:11px; }
+  .actor-doubao { background:#3a2b16; color:#ffce8f; }
+  .actor-codex { background:#16302a; color:#7fe0c4; }
+  .actor-claude { background:#241f3d; color:#c9b8ff; }
+  .actor-cursor { background:#152c3d; color:#8fc8ff; }
+  .actor-human, .actor-seeder, .actor-board-operator { background:#33202a; color:#ffb0c0; }
+  .arrow { color:var(--accent); font-weight:600; }
+  .processed { display:inline-block; margin-left:8px; font-size:11px; color:var(--green); }
 </style>
 </head>
 <body>
@@ -80,6 +97,14 @@
   <h1>编排控制台 · cc-scheduler</h1>
   <span class="live"><span class="dot"></span><span id="live-text">连接中…</span></span>
   <div class="spacer"></div>
+  <label class="speed">慢动作
+    <select id="sim-speed" title="每个节点停留秒数，让任务流转肉眼可见；0=即时">
+      <option value="0">即时</option>
+      <option value="1.5" selected>1.5 秒/步</option>
+      <option value="3">3 秒/步</option>
+      <option value="6">6 秒/步</option>
+    </select>
+  </label>
   <button class="ghost" id="btn-reset" title="重置为可复现的演示任务池（会清空当前任务并停止所有 worker）">重置演示池</button>
 </header>
 
@@ -96,6 +121,13 @@
   </section>
 
   <section class="board" id="board"></section>
+
+  <section class="feed">
+    <h2>实时活动流 <span class="sub">最近 20 条状态变更（谁、在哪个任务、做了什么）</span></h2>
+    <table>
+      <tbody id="feed-body"><tr><td class="reason">等待事件…</td></tr></tbody>
+    </table>
+  </section>
 
   <p class="hint">
     流程：点亮某 Agent 的节点开关 → 点 <b>GO</b>，它会自动从任务池按优先级/先后顺序领取该节点任务并循环，直到池空或你点 <b>STOP</b>。
@@ -139,6 +171,31 @@ function esc(s){ return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","
 function ago(iso){ if(!iso) return ""; const ms = Date.now() - Date.parse(iso); if(isNaN(ms)) return "";
   const s = Math.round(ms/1000); if(s<60) return s+" 秒前"; if(s<3600) return Math.round(s/60)+" 分前"; return Math.round(s/3600)+" 时前"; }
 
+function processedByActor(){
+  const map = {};
+  for (const a of (state?.audit || [])) {
+    (map[a.actor] = map[a.actor] || new Set()).add(a.task_id);
+  }
+  const out = {}; for (const k in map) out[k] = map[k].size; return out;
+}
+function renderFeed(){
+  const body = document.getElementById("feed-body");
+  const rows = (state?.audit || []).slice().sort((a,b)=> (b.id||0)-(a.id||0)).slice(0,20);
+  if (!rows.length){ body.innerHTML = `<tr><td class="reason">暂无事件——点 GO 后这里会实时滚动。</td></tr>`; return; }
+  body.innerHTML = rows.map(a => {
+    const actor = (a.actor || "?").toLowerCase();
+    const cls = ["doubao","codex","claude","cursor","human"].some(k=>actor.includes(k))
+      ? actor.split(/[^a-z]/)[0] : "board-operator";
+    return `<tr>
+      <td>${esc((a.created_at||"").slice(11,19))}</td>
+      <td><span class="actor-pill actor-${esc(cls)}">${esc(a.actor)}</span></td>
+      <td>${esc(a.task_id)}</td>
+      <td>${esc(STATUS_LABEL[a.from_status] || a.from_status || "—")} <span class="arrow">→</span> ${esc(STATUS_LABEL[a.to_status] || a.to_status)}</td>
+      <td class="reason">${esc(a.reason || "")}</td>
+    </tr>`;
+  }).join("");
+}
+
 function renderAgentSelect(){
   const sel = document.getElementById("agent-select");
   const executors = state.control.executors;
@@ -152,6 +209,7 @@ function renderAgentSelect(){
 function renderNodeGrid(executor){
   const grid = document.getElementById("node-grid");
   if(!executor){ grid.innerHTML=""; return; }
+  const counts = processedByActor();
   grid.innerHTML = state.control.nodes.map(node=>{
     const cap = executor.capabilities[node.id] || { enabled:0, locked:0 };
     const sess = executor.sessions[node.id] || {};
@@ -160,9 +218,10 @@ function renderNodeGrid(executor){
     const switchCtrl = locked
       ? `<span class="switch locked" title="策略锁定，不可开启">🔒 已锁定（不可开启）</span>`
       : `<label class="switch"><input type="checkbox" data-node="${node.id}" class="cap-switch" ${cap.enabled?"checked":""}/> 能力开关</label>`;
+    const processed = counts[executor.executor_id] || 0;
     const runState = running
-      ? `<b>● 运行中</b>${sess.current_task_id?` · 当前 <span class="cur">${esc(sess.current_task_id)}</span>`:" · 等待任务"} <br><span>${esc(ago(sess.last_heartbeat))} 心跳</span> ${sess.last_result?`· ${esc(sess.last_result)}`:""}`
-      : `○ 空闲 ${sess.last_result?`· <span class="err">${esc(sess.last_result)}</span>`:""}`;
+      ? `<b>● 运行中</b>${sess.current_task_id?` · 当前 <span class="cur">${esc(sess.current_task_id)}</span>`:" · 等待任务"} <br><span>${esc(ago(sess.last_heartbeat))} 心跳</span> ${sess.last_result?`· ${esc(sess.last_result)}`:""}<br><span class="processed">累计处理 ${processed} 个任务</span>`
+      : `○ 空闲 ${sess.last_result?`· <span class="err">${esc(sess.last_result)}</span>`:""} <span class="processed">累计 ${processed}</span>`;
     return `<div class="node-card">
       <div class="top">
         <span class="node-name">${esc(node.label)}节点</span>
@@ -229,12 +288,21 @@ async function refresh(){
     state = await api("/api/data");
     document.getElementById("live-text").textContent =
       `实时 · ${state.tasks.length} 任务 · 更新于 ${new Date().toLocaleTimeString()}`;
+    const speed = document.getElementById("sim-speed");
+    const delay = String(state.control?.sim_step_delay ?? 1.5);
+    if (document.activeElement !== speed) speed.value = delay;
     renderAgentSelect();
     renderBoard();
+    renderFeed();
   } catch(e){
     document.getElementById("live-text").textContent = "无法连接后端：" + e.message;
   }
 }
+
+document.getElementById("sim-speed").addEventListener("change", async e=>{
+  try { await api("/api/sim-config", { step_delay: Number(e.target.value) }); await refresh(); }
+  catch(err){ showError(err.message); }
+});
 
 document.getElementById("agent-select").addEventListener("change", e=>{ selected = e.target.value; refresh(); });
 document.getElementById("btn-reset").addEventListener("click", async ()=>{

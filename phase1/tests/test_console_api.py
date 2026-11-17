@@ -107,3 +107,14 @@ def test_reset_demo_reseeds_a_known_pool(http_server) -> None:
     assert counts.get("READY") == 5 and counts.get("REVIEW") == 1
     assert all(s["running"] == 0 for e in data["control"]["executors"]
                for s in e["sessions"].values())
+
+
+def test_sim_config_updates_step_delay(http_server) -> None:
+    status, body = _call(http_server, "POST", "/api/sim-config", {"step_delay": 2.5})
+    assert status == 200 and body["result"]["sim_step_delay"] == 2.5
+    status, data = _call(http_server, "GET", "/api/data")
+    assert data["control"]["sim_step_delay"] == 2.5
+    # Negative values are clamped to zero rather than rejected.
+    status, body = _call(http_server, "POST", "/api/sim-config", {"step_delay": -3})
+    assert status == 200 and body["result"]["sim_step_delay"] == 0
+    orchestrator.set_sim_step_delay(0)  # do not slow later tests in this process

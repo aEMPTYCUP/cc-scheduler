@@ -22,12 +22,29 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import time
 from typing import Any, Callable, Dict, List, Optional
 
 import protocol
 
 NODES = protocol.NODES
 NODE_LABELS = protocol.NODE_LABELS
+
+# Simulated work pacing: seconds a simulated worker holds a task in IN_PROGRESS
+# (and the auditor holds REVIEW) before the next transition. Zero keeps the
+# unit tests instant; the console can raise it so tasks visibly flow through
+# the node columns instead of completing within one supervisor tick.
+_sim_step_delay = 0.0
+
+
+def set_sim_step_delay(seconds: float) -> float:
+    global _sim_step_delay
+    _sim_step_delay = max(0.0, float(seconds))
+    return _sim_step_delay
+
+
+def get_sim_step_delay() -> float:
+    return _sim_step_delay
 
 # Ordered like the kernel's select_next_task(): priority, then creation time,
 # then task id, so two nodes drain their pools in the same deterministic order.
@@ -259,16 +276,22 @@ class SimulatedAdapter(WorkerAdapter):
     ACCEPTED / REWORK / NEEDS_HUMAN without a real claude subprocess.
     """
 
-    def __init__(self, acceptance_verdict: str = "ACCEPTED") -> None:
+    def __init__(self, acceptance_verdict: str = "ACCEPTED",
+                 step_delay: Optional[float] = None) -> None:
         if acceptance_verdict not in ("ACCEPTED", "REWORK", "NEEDS_HUMAN"):
             raise ValueError("acceptance_verdict must be ACCEPTED, REWORK or NEEDS_HUMAN")
         self.acceptance_verdict = acceptance_verdict
+        # None -> read the process-wide pacing each time, so a console change
+        # reaches the supervisor's freshly-constructed adapter on its next tick.
+        self.step_delay = get_sim_step_delay() if step_delay is None else max(0.0, float(step_delay))
 
     def implement(self, task: Dict[str, Any], executor_id: str) -> str:
         tid = task["task_id"]
         protocol.atomic_claim(tid, agent_id=executor_id, executor_id=executor_id)
         protocol.transition(tid, "IN_PROGRESS", executor_id,
                             "sim: start implementation", actor_executor_id=executor_id)
+        if self.step_delay:
+            time.sleep(self.step_delay)  # visibly linger in the "coding" column
         protocol.transition(tid, "SUBMITTED", executor_id,
                             "sim: implementation finished", actor_executor_id=executor_id)
         protocol.transition(tid, "REVIEW", executor_id,
@@ -280,6 +303,8 @@ class SimulatedAdapter(WorkerAdapter):
 
     def accept(self, task: Dict[str, Any], executor_id: str) -> str:
         tid = task["task_id"]
+        if self.step_delay:
+            time.sleep(self.step_delay)  # visibly linger in the "review" column
         protocol.transition(tid, self.acceptance_verdict, executor_id,
                             f"sim: independent acceptance -> {self.acceptance_verdict}",
                             actor_executor_id=executor_id)
@@ -426,6 +451,7 @@ def console_state() -> Dict[str, Any]:
     return {
         "nodes": [{"id": node, "label": NODE_LABELS[node]} for node in NODES],
         "executors": executors,
+        "sim_step_delay": get_sim_step_delay(),
     }
 
 
