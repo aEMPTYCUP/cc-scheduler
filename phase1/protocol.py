@@ -152,9 +152,18 @@ def load_role_spec(role_id: str) -> dict:
 def register_role(role_id: str):
     spec = load_role_spec(role_id)
     with get_db() as conn:
+        # Upsert that updates the existing row in place. INSERT OR REPLACE
+        # deletes the parent row and re-inserts it, which under
+        # foreign_keys=ON leaves the tasks -> role_specs reference pointing
+        # at a brand new row instead of the existing one.
         conn.execute("""
-            INSERT OR REPLACE INTO role_specs (role_id, name, content_hash, content, created_at)
+            INSERT INTO role_specs (role_id, name, content_hash, content, created_at)
             VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(role_id) DO UPDATE SET
+                name=excluded.name,
+                content_hash=excluded.content_hash,
+                content=excluded.content,
+                created_at=excluded.created_at
         """, (role_id, role_id, spec["content_hash"], spec["content"], utcnow()))
     print(f"Registered role {role_id} hash={spec['content_hash'][:12]}")
 
@@ -184,10 +193,27 @@ def ready_task(task_id: str, actor: str = "A0"):
     print(f"Task {task_id} → READY")
 
 
-def atomic_claim(task_id: str, agent_id: str) -> dict:
-    """Atomic READY → CLAIMED. Returns task package dict."""
+def atomic_claim(task_id: str, agent_id: str, executor_id: Optional[str] = None) -> dict:
+    """Atomic READY → CLAIMED. Returns task package dict.
+
+    executor_id is optional. When given it must name an active row in
+    executors and is frozen into tasks.implementer_executor_id at claim
+    time; when omitted the column is left NULL and the call keeps the
+    legacy behaviour.
+    """
     with get_db() as conn:
         conn.execute("BEGIN IMMEDIATE")
+        if executor_id is not None:
+            executor = conn.execute(
+                "SELECT active FROM executors WHERE executor_id=?", (executor_id,)
+            ).fetchone()
+            if executor is None:
+                conn.execute("ROLLBACK")
+                raise ValueError(f"Unknown executor {executor_id}")
+            if not executor["active"]:
+                conn.execute("ROLLBACK")
+                raise ValueError(f"Executor {executor_id} is not active")
+
         row = conn.execute(
             "SELECT * FROM tasks WHERE task_id=? AND status='READY'", (task_id,)
         ).fetchone()
@@ -206,12 +232,15 @@ def atomic_claim(task_id: str, agent_id: str) -> dict:
         package_hash = package["package_hash"]
         now = utcnow()
 
-        conn.execute("""
+        cur = conn.execute("""
             UPDATE tasks SET status='CLAIMED', claimed_by=?, claimed_at=?,
-                             package_hash=?, updated_at=?
+                             package_hash=?, updated_at=?, implementer_executor_id=?
             WHERE task_id=? AND status='READY'
-        """, (agent_id, now, package_hash, now, task_id))
-        if conn.total_changes == 0:
+        """, (agent_id, now, package_hash, now, executor_id, task_id))
+        # cur.rowcount is the number of rows this statement touched;
+        # conn.total_changes counts every change on the connection and is
+        # therefore only accidentally correct here.
+        if cur.rowcount == 0:
             conn.execute("ROLLBACK")
             raise RuntimeError("Claim race lost")
 
