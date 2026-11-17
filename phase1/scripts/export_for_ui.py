@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Export protocol-layer tasks and audit log to static JSON for the Phase 1 board.
 
-Reads the SQLite task pool (default: /tmp/phase1_protocol.db) and writes
+Reads the SQLite task pool (default: protocol.DB_PATH, resolved from PHASE1_DB,
+the legacy /tmp path, or the system temp dir) and writes
 phase1/ui/data.json plus a data.js wrapper so the board can open from a
 file:// page. If the database is missing, writes the built-in demo snapshot.
 
@@ -21,7 +22,12 @@ from pathlib import Path
 
 PHASE1_DIR = Path(__file__).resolve().parents[1]
 ROLES_DIR = PHASE1_DIR / "roles"
-DEFAULT_DB = Path("/tmp/phase1_protocol.db")
+if str(PHASE1_DIR) not in sys.path:
+    sys.path.insert(0, str(PHASE1_DIR))
+
+import protocol  # noqa: E402
+
+DEFAULT_DB = protocol.DB_PATH
 DEFAULT_OUT = PHASE1_DIR / "ui" / "data.json"
 SUBMITTABLE = {"CLAIMED", "IN_PROGRESS"}
 EXECUTORS = [

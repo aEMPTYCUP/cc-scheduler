@@ -14,11 +14,17 @@
 - 只在分支 `feature/phase1-p0-p1` 上工作；PASS 才 commit，**不 push**（push 需人工确认）。
 - 派单前查 MiniMax 配额，fail-closed（异常/冷却即停，不硬调）。
 
+## 实测环境备注（2026-11-17）
+
+- 本机 `%TEMP%\pytest-of-32831\pytest-current` 因 codex 沙箱账号（unknown）残留出现 Permission denied，导致**默认 basetemp 的 pytest 在会话清理阶段退出码 1，但测试断言本身全过**。T-01 验收用 `--basetemp=$TEMP/ccs-pytest-bt` 取得权威 6 passed。**T-03 必须落地项目级 pytest 配置（addopts 指向仓库内被 gitignore 的临时目录），让后续任务不再依赖被污染的用户 TEMP。**
+- codex 0.147 派单固定写法：`codex exec -C <repo> --approve-for-me --ephemeral --color never "<prompt>" </dev/null`。两条铁律：`--sandbox workspace-write` 与 `--approve-for-me` 互斥（后者自带 workspace-write）；后台运行必须 `</dev/null`，否则 codex 阻塞在 `Reading additional input from stdin...` 永不返回。
+- 验收只提交明确文件，禁止 `git add -A`；`__pycache__/`、`.pytest_cache/` 由 T-02 进 .gitignore。
+
 ## 队列总表
 
 | ID | 状态 | 优先级 | 依赖 | redo | 标题 |
 | --- | --- | --- | --- | --- | --- |
-| T-01 | ⬜ | high | — | 0 | DB 路径单一来源 + PHASE1_DB env |
+| T-01 | ✅ passed | high | — | 0 | DB 路径单一来源 + PHASE1_DB env |
 | T-02 | ⬜ | medium | T-01 | 0 | .gitignore 补全与生成物退跟踪 |
 | T-03 | ⬜ | high | T-01 | 0 | pytest 骨架 + CI 改真跑测试 |
 | T-04 | ⬜ | high | T-03 | 0 | schema v1 + user_version 幂等迁移 |

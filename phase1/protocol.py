@@ -6,13 +6,31 @@ import json
 import os
 import sqlite3
 import subprocess
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-DB_PATH = Path("/tmp/phase1_protocol.db")
+LEGACY_DB_PATH = Path("/tmp/phase1_protocol.db")
 ROLES_DIR = Path(__file__).parent / "roles"
 PACKAGES_DIR = Path(__file__).parent / "task-packages"
+
+
+def _resolve_db_path() -> Path:
+    """Resolve the protocol DB path (single source of truth).
+
+    Priority: PHASE1_DB env var > legacy /tmp path (when it exists)
+    > <system temp dir>/phase1/phase1_protocol.db.
+    """
+    env_value = (os.environ.get("PHASE1_DB") or "").strip()
+    if env_value:
+        return Path(env_value)
+    if LEGACY_DB_PATH.exists():
+        return LEGACY_DB_PATH
+    return Path(tempfile.gettempdir()) / "phase1" / "phase1_protocol.db"
+
+
+DB_PATH = _resolve_db_path()
 
 
 def utcnow() -> str:
@@ -20,6 +38,7 @@ def utcnow() -> str:
 
 
 def get_db() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=DELETE")
