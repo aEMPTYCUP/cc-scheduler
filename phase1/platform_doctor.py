@@ -203,6 +203,35 @@ def check_doubao_identities(report: Report, bridge_root: str) -> None:
                "register the missing identity in the bridge registry")
 
 
+def check_codex_sandbox_functional(report: Report) -> None:
+    """Deep probe: can the Codex Windows sandbox actually run a command?
+
+    On this host the elevated backend never completes the runner pipe handshake
+    ("timed out after 15000ms connecting runner pipe-in"), so the platform runs
+    codex with DSH_CODEX_SANDBOX=danger-full-access inside an isolated worktree.
+    This check makes the state visible instead of hiding it.
+    """
+    path = _find_binary("codex")
+    if not path:
+        return
+    try:
+        proc = subprocess.run(["codex", "sandbox", "echo", "probe"],
+                              capture_output=True, text=True, timeout=90,
+                              shell=(os.name == "nt"))
+        out = (proc.stdout + proc.stderr)
+        ok = proc.returncode == 0 and "probe" in out
+        report.add("codex windows sandbox functional", ok,
+                   "sandbox ran the command" if ok else out.strip()[:120],
+                   "update the Codex desktop app (Microsoft Store) so its sandbox "
+                   "service matches the CLI; until then keep "
+                   "DSH_CODEX_SANDBOX=danger-full-access",
+                   warn_only=True)
+    except Exception as exc:  # noqa: BLE001
+        report.add("codex windows sandbox functional", False, str(exc)[:120],
+                   "update the Codex desktop app; keep DSH_CODEX_SANDBOX=danger-full-access",
+                   warn_only=True)
+
+
 def check_bridge_mailbox(report: Report, bridge_root: str) -> None:
     root = Path(bridge_root)
     exists = root.is_dir()
@@ -299,6 +328,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "PHASE1_DB", r"C:/Users/32831/cc-scheduler/phase1/.local/queue.db"))
     parser.add_argument("--skip-executors", action="store_true",
                         help="do not probe external CLIs (fast)")
+    parser.add_argument("--deep", action="store_true",
+                        help="also probe the codex Windows sandbox (slow: ~30s when broken)")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     args = parser.parse_args(argv)
 
@@ -317,6 +348,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             check_doubao_identities(report, args.bridge_root)
         else:
             check_executor(report, "doubao", "doubao", probe_cmd=["doubao", "--version"])
+    if args.deep:
+        check_codex_sandbox_functional(report)
     check_bridge_mailbox(report, args.bridge_root)
     check_console_db(report, args.db)
     check_scheduled_tasks(report)
