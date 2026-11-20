@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Codex real implement-node adapter — the primary real executor (R-98 / N-17).
+
+Drives non-interactive ``codex exec`` in a dedicated worktree under a
+workspace-write sandbox with approvals off via config override. Every external
+effect is injectable (subprocess runner, worktree factory, HEAD resolver),
+mirroring ClaudeSubprocessAdapter, so the state-machine logic is hermetic-
+testable without spawning codex. Integration stays a human gate and acceptance
+belongs to the independent reviewer node.
+"""
+from __future__ import annotations
+
+import shutil
+import tempfile
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
+
+import protocol
+from orchestrator import WorkerAdapter
+from real_adapters import (
+    RealAdapterError,
+    build_implement_prompt,
+    default_head_resolver,
+    default_subprocess_runner,
+)
+
+
+class CodexAdapter(WorkerAdapter):
+    """Real implement-node executor driving headless ``codex exec``.
+
+    ``codex exec`` has no ``--ask-for-approval`` flag (that is a top-level
+    option), so approvals are turned off through a config override:
+    ``-c 'approval_policy="never"'``. Combined with the workspace-write sandbox
+    this confines model-generated shell commands to the task worktree while
+    still letting codex run the whitelisted git add/commit the prompt demands.
+    """
+
+    is_simulated = False
+
+    def __init__(
+        self,
+        repo_path: str,
+        *,
+        runner: Optional[Callable] = None,
+        worktree_factory: Optional[Callable[[Dict[str, Any]], str]] = None,
+        head_resolver: Optional[Callable[[str], str]] = None,
+        sandbox: str = "workspace-write",
+        approval: str = "never",
+        model: Optional[str] = None,
+        extra_config: Optional[List[str]] = None,
+        timeout: int = 1800,
+        prompt_extra: str = "",
+    ) -> None:
+        self.repo_path = str(repo_path)
+        self._runner = runner or default_subprocess_runner
+        self._worktree_factory = worktree_factory
+        self._head_resolver = head_resolver or default_head_resolver
+        self.sandbox = sandbox
+        self.approval = approval
+        self.model = model
+        self.extra_config = list(extra_config or [])
+        self.timeout = timeout
+        self.prompt_extra = prompt_extra
+
+    def _ensure_worktree(self, task: Dict[str, Any]) -> str:
+        existing = task.get("worktree_path")
+        if existing and Path(existing).is_dir():
+            return existing
+        if self._worktree_factory is not None:
+            return self._worktree_factory(task)
+        return protocol.create_worktree(self.repo_path, task["task_id"])
+
+    def _build_argv(self, worktree: str, output_file: str) -> List[str]:
+        """The fixed ``codex exec`` argv (without the executable path)."""
+        argv = [
+            "exec",
+            "-C", worktree,
+            "-s", self.sandbox,
+            "--ephemeral",
+            "--json",
+            "-o", output_file,
+            "-c", f'approval_policy="{self.approval}"',
+        ]
+        if self.model:
+            argv += ["-m", self.model]
+        for config in self.extra_config:
+            argv += ["-c", config]
+        return argv
+
+    def implement(self, task: Dict[str, Any], executor_id: str) -> str:
+        tid = task["task_id"]
+        try:
+            protocol.atomic_claim(tid, agent_id=executor_id, executor_id=executor_id)
+            protocol.transition(tid, "IN_PROGRESS", executor_id,
+                                "codex adapter started",
+                                actor_executor_id=executor_id)
+            worktree = self._ensure_worktree(task)
+
+            codex = (shutil.which("codex") or shutil.which("codex.exe")
+                     or shutil.which("codex.cmd"))
+            if not codex:
+                raise RealAdapterError("codex executable not found in PATH")
+
+            output_file = str(Path(tempfile.gettempdir()) / f"codex-last-{tid}.txt")
+            cmd = [codex] + self._build_argv(worktree, output_file)
+            result = self._runner(cmd, worktree,
+                                  build_implement_prompt(task) + self.prompt_extra,
+                                  self.timeout)
+
+            returncode = getattr(result, "returncode", 1)
+            if returncode != 0:
+                output = getattr(result, "stdout", b"")
+                raise RealAdapterError(
+                    f"codex exited {returncode}: {str(output)[-400:]}"
+                )
+
+            sha = self._head_resolver(worktree)
+            protocol.add_evidence(tid, "cli_log", f"codex-headless:{tid}",
+                                  executor_id, sync_audit=False)
+            protocol.add_evidence(tid, "commit_sha", f"commit:{sha}", executor_id,
+                                  sha256=sha, sync_audit=False)
+            protocol.transition(tid, "SUBMITTED", executor_id,
+                                f"codex headless finished ({sha[:10]})",
+                                actor_executor_id=executor_id)
+            protocol.transition(tid, "REVIEW", "system",
+                                "auto-moved to independent review",
+                                actor_executor_id=executor_id)
+            return f"{tid} implemented by headless codex -> REVIEW ({sha[:10]})"
+        except Exception as exc:  # noqa: BLE001 - park the task, never fake success
+            self._park_for_human(tid, executor_id, exc)
+            return f"{tid} failed and parked for human: {type(exc).__name__}: {exc}"
+
+    def accept(self, task: Dict[str, Any], executor_id: str) -> str:
+        raise PermissionError("CodexAdapter is coding-only and cannot run acceptance")
+
+    def integrate(self, task: Dict[str, Any], executor_id: str) -> str:
+        raise PermissionError("CodexAdapter is coding-only and cannot integrate")
+
+    def _park_for_human(self, tid: str, executor_id: str, exc: Exception) -> None:
+        try:
+            protocol.record_failure(tid, executor_id, str(exc)[:500],
+                                    "codex adapter failure")
+        except Exception:  # noqa: BLE001 - FAILED edge may be illegal from this state
+            try:
+                protocol.block_task(tid, executor_id,
+                                    f"adapter error: {type(exc).__name__}")
+            except Exception:  # noqa: BLE001 - last resort; the worker loop must survive
+                pass
