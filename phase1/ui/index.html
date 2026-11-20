@@ -91,6 +91,9 @@
   header label.speed { font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; }
   header label.speed select { min-width:0; padding:5px 8px; }
   /* N-06: new-task form + per-task state-machine timeline */
+  .src-badge { font-size:11px; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:3px 10px; }
+  .src-badge.live { color:#9fe6b0; border-color:#2c5a3c; }
+  .src-badge.demo { color:#ffb0c0; border-color:#5a2c3c; }
   .new-task { background:var(--panel); border:1px dashed var(--line); border-radius:14px; padding:12px 16px; margin-top:14px; }
   .new-task h2 { display:flex; align-items:center; justify-content:space-between; margin:0 0 8px; }
   .nt-row { display:flex; gap:8px; margin:6px 0; flex-wrap:wrap; align-items:center; }
@@ -126,6 +129,7 @@
 <header>
   <h1>编排控制台 · cc-scheduler</h1>
   <span class="live"><span class="dot"></span><span id="live-text">连接中…</span></span>
+  <span class="src-badge" id="src-badge" title="看板数据源">数据源：检查中…</span>
   <div class="spacer"></div>
   <label class="speed">慢动作
     <select id="sim-speed" title="每个节点停留秒数，让任务流转肉眼可见；0=即时">
@@ -135,6 +139,7 @@
       <option value="6">6 秒/步</option>
     </select>
   </label>
+  <button class="primary" id="btn-dispatch-all" title="把池中所有 READY 任务依次派给当前选中的执行通道（真实执行器，派单前自动环境预检）">⚡ 一键派单（全部 READY）</button>
   <button class="ghost" id="btn-reset" title="重置为可复现的演示任务池（会清空当前任务并停止所有 worker）">重置演示池</button>
 </header>
 
@@ -261,6 +266,18 @@ function renderFeed(){
   }).join("");
 }
 
+function renderDataSource(){
+  const el = document.getElementById("src-badge");
+  if (!el) return;
+  const s = state.data_source || {};
+  const live = s.mode === "live";
+  el.className = "src-badge " + (live ? "live" : "demo");
+  el.textContent = live
+    ? `数据源：生产库 · ${s.tasks} 任务 · ${s.audit_events} 审计事件 · ${s.bridge_cards} 桥接卡`
+    : `数据源：演示兜底（未连到生产库）`;
+  el.title = live ? `sqlite: ${s.db}` : "数据库不可用，显示内置演示数据";
+}
+
 function renderRoleSelect(){
   const sel = document.getElementById("nt-role");
   if (!sel) return;
@@ -375,6 +392,7 @@ function taskCard(t){
       ${ownerTag}
     </div>
     ${t.last_error?`<div class="lasterr">⚠ ${esc(t.last_error)}</div>`:""}
+    ${t.status==="READY"?`<button data-dispatch="${esc(t.task_id)}" title="把该任务派给当前选中的执行通道（真实执行器）">▶ 派单给 ${esc(selected||"?")}</button>`:""}
     ${taskTimeline(t)}
     ${canIntegrate?`<button data-integrate="${esc(t.task_id)}">人工集成 → DONE</button>`:""}
   </div>`;
@@ -406,6 +424,15 @@ function renderBoard(){
     try { await api("/api/integrate", { task_id:btn.dataset.integrate }); await refresh(); }
     catch(e){ showError(e.message); }
   }));
+  board.querySelectorAll("[data-dispatch]").forEach(btn=>btn.addEventListener("click", async ()=>{
+    btn.disabled = true; btn.textContent = "派单中…";
+    try {
+      const r = await api("/api/dispatch", { task_id:btn.dataset.dispatch, executor_id:selected, node:"implement" });
+      const row = (r.result.rows||[])[0] || {};
+      showToast(`${btn.dataset.dispatch}: ${row.status||"?"}${row.error?" ("+row.error+")":""}`);
+      await refresh();
+    } catch(e){ showError(e.message); await refresh(); }
+  }));
 }
 
 async function refresh(){
@@ -419,6 +446,7 @@ async function refresh(){
     renderAgentSelect();
     renderBoard();
   renderRoleSelect();
+  renderDataSource();
     renderFeed();
     const banner = document.getElementById("guard-banner");
     if (state.control?.sim_go_blocked) {
@@ -438,6 +466,19 @@ document.getElementById("sim-speed").addEventListener("change", async e=>{
 });
 
 document.getElementById("agent-select").addEventListener("change", e=>{ selected = e.target.value; refresh(); });
+document.getElementById("btn-dispatch-all").addEventListener("click", async ()=>{
+  const btn = document.getElementById("btn-dispatch-all");
+  if(!confirm(`把池中所有 READY 任务派给 ${selected||"?"}？每个任务会真实调用该执行器。`)) return;
+  btn.disabled = true; const old = btn.textContent; btn.textContent = "派单中…";
+  try {
+    const r = await api("/api/dispatch-all", { executor_id:selected, node:"implement", max_tasks:10 });
+    const rows = r.result.rows || [];
+    const done = rows.filter(x=>x.status==="worked").length;
+    showToast(`派单完成：处理 ${done}/${rows.length} 个任务` + (rows.some(x=>x.error) ? `（首个错误：${rows.find(x=>x.error).error}）` : ""));
+    await refresh();
+  } catch(e){ showError(e.message); }
+  btn.disabled = false; btn.textContent = old;
+});
 document.getElementById("btn-reset").addEventListener("click", async ()=>{
   if(!confirm("重置演示池？将清空当前任务、停止所有 worker，并重建 5 个待编程 + 1 个待验收任务。")) return;
   try { await api("/api/reset-demo", {}); await refresh(); }

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -46,6 +47,35 @@ def _db_path() -> Path:
 # agent-bridge data root whose registry holds the concrete registered
 # identities (e.g. the two Doubao accounts). Overridable via --bridge-root.
 BRIDGE_ROOT = Path(r"C:/Users/32831/wt/bridge-live")
+
+
+# Real-executor wiring for the dispatch endpoints. Set from main().
+REPO_PATH = r"C:/Users/32831/OneDrive/Desktop/期货分析"
+DOUBAO_OWNER = "doubao-shenlanking"
+WORKTREE_ROOT = r"C:/Users/32831/wt"
+
+
+def _real_adapter(executor_id: str):
+    """Build the real executor adapter for a channel (None if unavailable)."""
+    try:
+        if executor_id == "claude":
+            from real_adapters import ClaudeSubprocessAdapter
+            return ClaudeSubprocessAdapter(REPO_PATH)
+        if executor_id == "codex":
+            from codex_adapter import CodexAdapter
+            return CodexAdapter(REPO_PATH)
+        if executor_id == "doubao":
+            bridge_pkg = os.environ.get(
+                "DSH_BRIDGE_PKG",
+                "C:/Users/32831/wt/agent-bridge-implementation/.claude")
+            if bridge_pkg not in sys.path:
+                sys.path.insert(0, bridge_pkg)
+            from real_adapters import DoubaoAdapter
+            return DoubaoAdapter(bridge_root=str(BRIDGE_ROOT), owner=DOUBAO_OWNER,
+                                 worktree_root=WORKTREE_ROOT)
+    except Exception:  # noqa: BLE001 - the board reports unavailability
+        return None
+    return None
 
 
 def _registered_roles() -> list:
@@ -158,6 +188,15 @@ class BoardHandler(SimpleHTTPRequestHandler):
                 payload["bridge_sync_error"] = f"{type(exc).__name__}: {exc}"
             payload["bridge"] = _load_bridge_assignments()
             payload["roles"] = _registered_roles()
+            # Make the data source explicit on the board: live production pool
+            # vs the built-in demo fallback. Never let a demo snapshot look real.
+            payload["data_source"] = {
+                "mode": "live" if db.exists() else "demo-fallback",
+                "db": str(db),
+                "tasks": len(payload.get("tasks") or []),
+                "audit_events": len(payload.get("audit") or []),
+                "bridge_cards": len((payload.get("bridge") or {}).get("assignments") or {}),
+            }
             self._json(200, payload)
             return
         if path == "/api/identities":
@@ -233,6 +272,45 @@ class BoardHandler(SimpleHTTPRequestHandler):
                     protocol.ready_task(task_id)
                 task = protocol.get_task(task_id)
                 result = {"task_id": task_id, "status": task["status"] if task else "?"}
+            elif path in ("/api/dispatch", "/api/dispatch-all"):
+                executor_id = (body.get("executor_id") or "").strip()
+                node = (body.get("node") or "implement").strip()
+                if not executor_id:
+                    self._json(400, {"ok": False, "error": "缺少 executor_id"})
+                    return
+                import scheduler_loop
+                # Fail-closed: the environment preflight runs BEFORE anything is
+                # dispatched; unhealthy contracts stop the dispatch.
+                pre = scheduler_loop.run_preflight(str(BRIDGE_ROOT), REPO_PATH)
+                if not pre.get("ok", True):
+                    self._json(503, {"ok": False, "error": "环境预检未通过，已阻止派单",
+                                     "preflight": pre})
+                    return
+                adapter = _real_adapter(executor_id)
+                if adapter is None:
+                    self._json(400, {"ok": False,
+                                     "error": f"通道 {executor_id} 没有可用的真实执行器"})
+                    return
+                max_tasks = 1
+                task_id = (body.get("task_id") or "").strip()
+                if path == "/api/dispatch-all":
+                    max_tasks = int(body.get("max_tasks") or 10)
+                elif task_id:
+                    task = protocol.get_task(task_id)
+                    if task is None:
+                        self._json(404, {"ok": False, "error": f"任务 {task_id} 不存在"})
+                        return
+                    if task["status"] != "READY":
+                        self._json(409, {"ok": False,
+                                         "error": f"任务 {task_id} 当前为 {task['status']}，只有 READY 可派单"})
+                        return
+                rows = scheduler_loop.run_schedule_once(
+                    executor_id, node, lambda: adapter,
+                    max_tasks=max_tasks,
+                )
+                result = {"executor_id": executor_id, "node": node, "rows": rows,
+                          "preflight": {"ok": pre.get("ok", True),
+                                        "checks": pre.get("checks")}}
             elif path == "/api/submit":
                 task_id = (body.get("task_id") or "").strip()
                 actor = (body.get("actor") or "board-operator").strip() or "board-operator"
@@ -286,8 +364,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="headless claude permission mode (bypassPermissions enables full autonomy)")
     args = parser.parse_args(argv)
 
-    global BRIDGE_ROOT
+    global BRIDGE_ROOT, REPO_PATH, DOUBAO_OWNER, WORKTREE_ROOT
     BRIDGE_ROOT = Path(args.bridge_root)
+    REPO_PATH = args.repo_path
+    DOUBAO_OWNER = args.doubao_owner
+    WORKTREE_ROOT = args.worktree_root
 
     orchestrator.set_sim_step_delay(args.sim_step_delay)
     orchestrator.ensure_orchestrator()
