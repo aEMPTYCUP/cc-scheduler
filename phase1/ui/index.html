@@ -67,7 +67,22 @@
   .tag.pri-medium { background:#3a301d; color:#ffce8f; }
   .tag.pri-low { background:#22302a; color:#9fd8b8; }
   .tag.owner { background:#1d2b3a; color:#9cc4ff; }
+  .tag.bridge-owner { background:#13352b; color:#7fe6bd; border:1px solid #27604c; }
   .tag.status { background:#2b2340; color:#c9b8ff; }
+  .tag.role { background:#1d3a33; color:#8fe0c8; }
+  .tag.role.manual { background:#3a2a1d; color:#ffb877; }
+  .guard-banner { margin:10px 16px 0; padding:10px 14px; border-radius:10px;
+    background:#3a1d26; border:1px solid #6e2b3a; color:#ffb3c0; font-size:13px; }
+  .guard-banner b { color:#ff8fa3; }
+  .id-list { display:flex; flex-direction:column; gap:6px; }
+  .id-card { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+    padding:7px 10px; border-radius:8px; background:#1b2338; border:1px solid #2a3550; font-size:13px; }
+  .id-card .id-name { font-weight:600; color:#cfe0ff; }
+  .id-card .id-tag { padding:1px 8px; border-radius:20px; background:#26304b; color:var(--muted); font-size:12px; }
+  .id-card .id-tag.kind-doubao { background:#1d3a33; color:#8fe0c8; }
+  .id-card .id-status { margin-left:auto; }
+  .id-card .id-status.active { color:#9fd8b8; }
+  .id-card .id-status.revoked { color:#ff9aaa; }
   .task .lasterr { color:var(--red); font-size:11px; margin-top:7px; word-break:break-all; }
   .task button { margin-top:8px; width:100%; padding:5px; font-size:12px; }
   .empty { color:#56607a; font-size:12px; text-align:center; padding:14px 0; }
@@ -75,6 +90,21 @@
   .hint code { background:var(--panel2); padding:1px 6px; border-radius:6px; }
   header label.speed { font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; }
   header label.speed select { min-width:0; padding:5px 8px; }
+  /* N-06: new-task form + per-task state-machine timeline */
+  .new-task { background:var(--panel); border:1px dashed var(--line); border-radius:14px; padding:12px 16px; margin-top:14px; }
+  .new-task h2 { display:flex; align-items:center; justify-content:space-between; margin:0 0 8px; }
+  .nt-row { display:flex; gap:8px; margin:6px 0; flex-wrap:wrap; align-items:center; }
+  .new-task input, .new-task textarea, .new-task select {
+    background:var(--panel2); color:var(--text); border:1px solid var(--line);
+    border-radius:6px; padding:6px 8px; flex:1; min-width:130px; font-size:12px;
+  }
+  .new-task textarea { width:100%; min-height:56px; }
+  .nt-ready { display:flex; align-items:center; gap:6px; white-space:nowrap; font-size:12px; color:var(--muted); }
+  .new-task button.primary { flex:0 0 auto; }
+  .timeline { margin-top:6px; border-top:1px dashed var(--line); padding-top:4px; font-size:11px; color:var(--muted); }
+  .tl-row { display:flex; gap:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tl-time { color:var(--blue,#7ab0ff); }
+  .tl-actor { color:#9aa4bd; max-width:90px; overflow:hidden; text-overflow:ellipsis; }
   .feed { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px 18px; margin-top:22px; }
   .feed h2 { margin:0 0 10px; font-size:15px; display:flex; justify-content:space-between; }
   .feed h2 .sub { color:var(--muted); font-size:12px; font-weight:400; }
@@ -108,16 +138,51 @@
   <button class="ghost" id="btn-reset" title="重置为可复现的演示任务池（会清空当前任务并停止所有 worker）">重置演示池</button>
 </header>
 
+<div id="guard-banner" class="guard-banner" hidden></div>
+
 <div class="wrap">
   <section class="console">
     <h2>Agent 控制台</h2>
     <div class="row">
-      <label>选择 Agent：
+      <label>选择执行通道：
         <select id="agent-select"></select>
       </label>
       <span class="hint" id="agent-kind"></span>
     </div>
+    <p class="hint" style="margin:2px 0 8px">下拉是<b>执行通道</b>（豆包/Codex/…）；具体豆包账号是文件邮箱里的<b>登记身份</b>，见下方。</p>
     <div class="node-grid" id="node-grid"></div>
+    <h3 style="margin:14px 0 6px">文件邮箱登记身份（agent-bridge registry）</h3>
+    <div id="identities" class="id-list"><span class="hint">加载中…</span></div>
+  </section>
+
+  <section class="new-task" id="new-task">
+    <h2>新建任务 <button class="ghost" id="btn-toggle-new" title="展开/收起创建表单">＋</button></h2>
+    <div id="new-task-form" hidden>
+      <div class="nt-row">
+        <input id="nt-id" placeholder="任务ID（如 T-900）" title="task_id，须唯一">
+        <input id="nt-title" placeholder="标题（必填）">
+        <select id="nt-priority">
+          <option value="low">low</option>
+          <option value="medium" selected>medium</option>
+          <option value="high">high</option>
+        </select>
+      </div>
+      <textarea id="nt-desc" placeholder="任务描述"></textarea>
+      <div class="nt-row">
+        <input id="nt-role" placeholder="角色 role_id（如 r1）" value="r1">
+        <input id="nt-accept" placeholder="验收标准 acceptance_criteria">
+      </div>
+      <div class="nt-row">
+        <input id="nt-paths" placeholder="白名单路径，逗号分隔（如 backend/app/x.py, README.md）">
+        <input id="nt-behavioral" placeholder="behavioral_check 命令（可选）">
+      </div>
+      <div class="nt-row">
+        <input id="nt-pass" placeholder="pass_condition（可选）">
+        <label class="nt-ready"><input type="checkbox" id="nt-ready" checked> 创建后立即可领取（READY）</label>
+      </div>
+      <button class="primary" id="btn-create">创建任务（走协议层）</button>
+      <span id="nt-msg" class="hint"></span>
+    </div>
   </section>
 
   <section class="board" id="board"></section>
@@ -206,6 +271,23 @@ function renderAgentSelect(){
   renderNodeGrid(cur);
 }
 
+async function renderIdentities(){
+  const box = document.getElementById("identities");
+  try {
+    const data = await api("/api/identities");
+    const list = data.identities || [];
+    if (!list.length){ box.innerHTML = `<span class="hint">${esc(data.note || "该邮箱根暂无登记身份")}</span>`; return; }
+    box.innerHTML = list.map(a=>`
+      <div class="id-card">
+        <span class="id-name">${esc(a.label || a.agent_id)}</span>
+        <span class="id-tag kind-${esc(a.kind)}">${esc(a.kind)}</span>
+        <span class="id-tag">${esc(a.agent_id)}</span>
+        <span class="id-tag">节点: ${(a.allowed_nodes||[]).join("/") || "—"}</span>
+        <span class="id-status ${a.status==="active"?"active":"revoked"}">${a.status==="active"?"● active":"○ revoked"}</span>
+      </div>`).join("");
+  } catch(e){ box.innerHTML = `<span class="hint">身份读取失败：${esc(e.message)}</span>`; }
+}
+
 function renderNodeGrid(executor){
   const grid = document.getElementById("node-grid");
   if(!executor){ grid.innerHTML=""; return; }
@@ -228,7 +310,8 @@ function renderNodeGrid(executor){
         ${switchCtrl}
       </div>
       <div class="node-actions">
-        <button class="go" data-go="${node.id}" ${running||!cap.enabled?"disabled":""}>GO</button>
+        <button class="go" data-go="${node.id}" ${running||!cap.enabled||state.control?.sim_go_blocked?"disabled":""}
+          title="${state.control?.sim_go_blocked?"真实任务池禁止模拟 GO：当前是模拟适配器，接入真实执行器后自动放行":""}">GO</button>
         <button class="stop" data-stop="${node.id}" ${running?"":"disabled"}>STOP</button>
       </div>
       <div class="runstate">${runState}</div>
@@ -252,19 +335,49 @@ function renderNodeGrid(executor){
 }
 
 function taskCard(t){
-  const owner = t.implementer_executor_id || t.claimed_by || null;
   const canIntegrate = t.status === "ACCEPTED";
+  const roleId = t.role_id || "";
+  const manual = roleId === "manual-triage";
+  const roleTag = roleId
+    ? `<span class="tag role ${manual?"manual":""}" title="实现角色 persona（与执行通道正交）">🧭 ${esc(roleId)}</span>`
+    : `<span class="tag role manual">🧭 未指派</span>`;
+  // Prefer the concrete bridge responsibility-card owner (a real Doubao
+  // account); fall back to the console-level execution channel otherwise.
+  const ba = (state.bridge && state.bridge.assignments || {})[t.task_id];
+  let ownerTag = "";
+  if (ba) {
+    ownerTag = `<span class="tag bridge-owner" title="文件邮箱责任卡 owner=${esc(ba.owner)} · 状态=${esc(ba.card_status)} · attempt=${esc(ba.attempt)}">🧑‍💻 ${esc(ba.owner_label)} · ${esc(ba.card_status)}</span>`;
+  } else {
+    const channel = t.implementer_executor_id || t.claimed_by || null;
+    ownerTag = channel
+      ? `<span class="tag owner" title="执行通道（未细化到具体豆包账号）">👤 ${esc(channel)}</span>`
+      : "";
+  }
   return `<div class="task">
     <div class="tid">${esc(t.task_id)}</div>
     <div class="title">${esc(t.title || "")}</div>
     <div class="meta">
       <span class="tag pri-${esc(t.priority||"medium")}">${esc(t.priority||"medium")}</span>
       <span class="tag status">${esc(STATUS_LABEL[t.status] || t.status)}</span>
-      ${owner?`<span class="tag owner">👤 ${esc(owner)}</span>`:""}
+      ${roleTag}
+      ${ownerTag}
     </div>
     ${t.last_error?`<div class="lasterr">⚠ ${esc(t.last_error)}</div>`:""}
+    ${taskTimeline(t)}
     ${canIntegrate?`<button data-integrate="${esc(t.task_id)}">人工集成 → DONE</button>`:""}
   </div>`;
+}
+
+function taskTimeline(t){
+  // N-06: per-task state-machine timeline from the audit log (latest 5 entries).
+  const rows = (state.audit||[]).filter(a=>a.task_id===t.task_id).slice(-5);
+  if (!rows.length) return "";
+  return `<div class="timeline" title="状态机迁移时间线（audit_log）">` +
+    rows.map(a=>`<div class="tl-row">
+      <span class="tl-time">${esc((a.created_at||"").slice(11,19))}</span>
+      <span class="tl-actor">${esc(a.actor||"?")}</span>
+      <span>${esc(STATUS_LABEL[a.from_status]||a.from_status||"—")} → ${esc(STATUS_LABEL[a.to_status]||a.to_status)}</span>
+    </div>`).join("") + `</div>`;
 }
 
 function renderBoard(){
@@ -294,6 +407,13 @@ async function refresh(){
     renderAgentSelect();
     renderBoard();
     renderFeed();
+    const banner = document.getElementById("guard-banner");
+    if (state.control?.sim_go_blocked) {
+      banner.hidden = false;
+      banner.innerHTML = `⚠ <b>真实任务池 · 模拟 GO 已禁用</b>：当前接入的是 SimulatedAdapter，启动会把真实任务在无真实代码/审计的情况下假跑到 DONE。接入真实执行适配器后自动放行（池模式=${state.control.pool_mode}）。`;
+    } else {
+      banner.hidden = true;
+    }
   } catch(e){
     document.getElementById("live-text").textContent = "无法连接后端：" + e.message;
   }
@@ -311,7 +431,37 @@ document.getElementById("btn-reset").addEventListener("click", async ()=>{
   catch(e){ showError(e.message); }
 });
 
+// N-06: new-task form — real protocol path via /api/create.
+document.getElementById("btn-toggle-new").addEventListener("click", ()=>{
+  const f = document.getElementById("new-task-form");
+  f.hidden = !f.hidden;
+  document.getElementById("btn-toggle-new").textContent = f.hidden ? "＋" : "－";
+});
+document.getElementById("btn-create").addEventListener("click", async ()=>{
+  const msg = document.getElementById("nt-msg");
+  const payload = {
+    task_id: document.getElementById("nt-id").value.trim(),
+    title: document.getElementById("nt-title").value.trim(),
+    description: document.getElementById("nt-desc").value,
+    role_id: document.getElementById("nt-role").value.trim() || "r1",
+    acceptance_criteria: document.getElementById("nt-accept").value.trim(),
+    priority: document.getElementById("nt-priority").value,
+    allowed_paths: document.getElementById("nt-paths").value.trim(),
+    behavioral_check: document.getElementById("nt-behavioral").value.trim(),
+    pass_condition: document.getElementById("nt-pass").value.trim(),
+    ready: document.getElementById("nt-ready").checked,
+  };
+  if (!payload.task_id || !payload.title){ msg.textContent = "task_id 和标题必填"; return; }
+  try {
+    const r = await api("/api/create", payload);
+    msg.textContent = `已创建 ${r.result.task_id}（${r.result.status}）`;
+    ["nt-id","nt-title","nt-desc","nt-accept","nt-paths","nt-behavioral","nt-pass"].forEach(
+      id => document.getElementById(id).value = "");
+    await refresh();
+  } catch(e){ msg.textContent = "创建失败：" + e.message; }
+});
 refresh();
+renderIdentities();   // registered bridge identities change rarely; load once
 setInterval(refresh, 1500);
 </script>
 </body>

@@ -118,3 +118,45 @@ def test_sim_config_updates_step_delay(http_server) -> None:
     status, body = _call(http_server, "POST", "/api/sim-config", {"step_delay": -3})
     assert status == 200 and body["result"]["sim_step_delay"] == 0
     orchestrator.set_sim_step_delay(0)  # do not slow later tests in this process
+
+
+def test_create_task_via_api_writes_through_protocol(http_server) -> None:
+    # N-06: the board's create form must go through protocol.create_task, never
+    # edit a demo JSON. Creating + ready puts a REAL task into the pool.
+    import protocol
+    protocol.ensure_schema()
+    with protocol.get_db() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO role_specs (role_id, name, content_hash, content, created_at) "
+            "VALUES ('r1','r1','h','c',?)", (protocol.utcnow(),))
+        conn.commit()
+    status, body = _call(http_server, "POST", "/api/create", {
+        "task_id": "T-API-1", "title": "api 创建", "description": "d",
+        "role_id": "r1", "acceptance_criteria": "ac",
+        "priority": "high", "allowed_paths": "backend/app/x.py, README.md",
+        "behavioral_check": "pytest -k x", "pass_condition": "pc", "ready": True,
+    })
+    assert status == 200, body
+    assert body["result"]["status"] == "READY"
+    status, data = _call(http_server, "GET", "/api/data")
+    assert status == 200
+    task = next(t for t in data["tasks"] if t["task_id"] == "T-API-1")
+    assert task["status"] == "READY"
+    assert task["priority"] == "high"
+    # allowed_paths came through as a parsed list in the protocol layer
+    import protocol
+    stored = protocol.get_task("T-API-1")
+    assert "backend/app/x.py" in (stored.get("allowed_paths_json") or "")
+
+
+def test_create_task_missing_fields_is_400(http_server) -> None:
+    status, body = _call(http_server, "POST", "/api/create", {"task_id": "T-API-2"})
+    assert status == 400
+    assert "title" in body["error"]
+
+
+def test_create_task_invalid_allowed_paths_is_400(http_server) -> None:
+    status, body = _call(http_server, "POST", "/api/create", {
+        "task_id": "T-API-3", "title": "t", "allowed_paths": 42,
+    })
+    assert status == 400
