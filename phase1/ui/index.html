@@ -169,7 +169,7 @@
       </div>
       <textarea id="nt-desc" placeholder="任务描述"></textarea>
       <div class="nt-row">
-        <input id="nt-role" placeholder="角色 role_id（如 r1）" value="r1">
+        <select id="nt-role" title="岗位角色（决定 persona 与验收视角）"></select>
         <input id="nt-accept" placeholder="验收标准 acceptance_criteria">
       </div>
       <div class="nt-row">
@@ -259,6 +259,18 @@ function renderFeed(){
       <td class="reason">${esc(a.reason || "")}</td>
     </tr>`;
   }).join("");
+}
+
+function renderRoleSelect(){
+  const sel = document.getElementById("nt-role");
+  if (!sel) return;
+  const roles = state.roles || [];
+  if (!roles.length) return;
+  const keep = sel.value;
+  sel.innerHTML = roles.map(r=>`<option value="${esc(r)}">${esc(r)}</option>`).join("");
+  const preferred = ["A3-backend-engineer","A0-orchestrator","A7-code-reviewer","A8-integration-release"];
+  const pick = preferred.find(r=>roles.includes(r)) || roles[0];
+  sel.value = roles.includes(keep) ? keep : pick;
 }
 
 function renderAgentSelect(){
@@ -406,6 +418,7 @@ async function refresh(){
     if (document.activeElement !== speed) speed.value = delay;
     renderAgentSelect();
     renderBoard();
+  renderRoleSelect();
     renderFeed();
     const banner = document.getElementById("guard-banner");
     if (state.control?.sim_go_blocked) {
@@ -443,7 +456,7 @@ document.getElementById("btn-create").addEventListener("click", async ()=>{
     task_id: document.getElementById("nt-id").value.trim(),
     title: document.getElementById("nt-title").value.trim(),
     description: document.getElementById("nt-desc").value,
-    role_id: document.getElementById("nt-role").value.trim() || "r1",
+    role_id: document.getElementById("nt-role").value.trim(),
     acceptance_criteria: document.getElementById("nt-accept").value.trim(),
     priority: document.getElementById("nt-priority").value,
     allowed_paths: document.getElementById("nt-paths").value.trim(),

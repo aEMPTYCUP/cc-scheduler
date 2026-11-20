@@ -44,8 +44,13 @@ def run_schedule_once(
             return [{"status": "paused", "task_id": None, "error": str(pause)}]
 
     orchestrator.ensure_orchestrator()
-    orchestrator.start_worker(executor_id, node)
     adapter = adapter_factory()
+    # Register whether the active adapter is simulated. The orchestrator refuses
+    # to start a worker on a production pool while a simulated adapter is
+    # registered (RealPoolSimulationGuard) -- so a real executor must declare
+    # itself before start_worker, otherwise the pass can never run in production.
+    orchestrator.configure_adapter(bool(getattr(adapter, "is_simulated", False)))
+    orchestrator.start_worker(executor_id, node)
     results: List[Dict[str, Optional[str]]] = []
     try:
         for _ in range(max(max_tasks, 1)):

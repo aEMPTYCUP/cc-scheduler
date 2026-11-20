@@ -79,3 +79,24 @@ def test_schedule_once_quota_hook_exception_is_fail_closed(db_path) -> None:
     assert results[0]["status"] == "paused"
     assert "fail-closed" in results[0]["error"]
     assert protocol.get_task("T-SCH-3")["status"] == "READY"
+
+
+def test_real_adapter_declares_itself_before_starting_on_production_pool(db_path):
+    # The orchestrator refuses a simulated adapter on a production pool
+    # (RealPoolSimulationGuard). A real executor must therefore declare
+    # itself before start_worker, or the pass can never run in production.
+    import protocol
+    protocol.ensure_schema()
+    protocol.set_pool_mode("production")
+
+    class RealAdapter:
+        is_simulated = False
+
+    class SimAdapter:
+        is_simulated = True
+
+    rows = run_schedule_once("claude", "implement", lambda: RealAdapter(), max_tasks=1)
+    assert rows and rows[0]["status"] in ("idle", "worked", "error")
+
+    with pytest.raises(orchestrator.RealPoolSimulationGuard):
+        run_schedule_once("claude", "implement", lambda: SimAdapter(), max_tasks=1)

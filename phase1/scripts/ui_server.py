@@ -48,6 +48,17 @@ def _db_path() -> Path:
 BRIDGE_ROOT = Path(r"C:/Users/32831/wt/bridge-live")
 
 
+def _registered_roles() -> list:
+    """Role ids registered in the console pool (the board form needs them)."""
+    try:
+        with protocol.get_db() as conn:
+            rows = conn.execute(
+                "SELECT role_id FROM role_specs ORDER BY role_id").fetchall()
+        return [row["role_id"] for row in rows]
+    except Exception:  # noqa: BLE001 - the board must still render
+        return []
+
+
 def _load_identities() -> dict:
     """Read registered bridge identities (read-only); degrade gracefully."""
     bridge_pkg = "C:/Users/32831/wt/agent-bridge-implementation/.claude"
@@ -146,6 +157,7 @@ class BoardHandler(SimpleHTTPRequestHandler):
             except Exception as exc:  # never let projection break the board
                 payload["bridge_sync_error"] = f"{type(exc).__name__}: {exc}"
             payload["bridge"] = _load_bridge_assignments()
+            payload["roles"] = _registered_roles()
             self._json(200, payload)
             return
         if path == "/api/identities":
@@ -191,9 +203,27 @@ class BoardHandler(SimpleHTTPRequestHandler):
                 if not isinstance(allowed, list):
                     self._json(400, {"ok": False, "error": "allowed_paths 必须是数组或逗号分隔字符串"})
                     return
+                if protocol.get_task(task_id) is not None:
+                    self._json(409, {
+                        "ok": False,
+                        "error": f"任务 {task_id} 已存在，请换一个 task_id",
+                    })
+                    return
+                role_id = (body.get("role_id") or "").strip()
+                known_roles = _registered_roles()
+                if not role_id:
+                    role_id = "A3-backend-engineer" if "A3-backend-engineer" in known_roles \
+                        else (known_roles[0] if known_roles else "A3-backend-engineer")
+                if known_roles and role_id not in known_roles:
+                    self._json(400, {
+                        "ok": False,
+                        "error": f"未知角色 {role_id!r}；可用角色: {', '.join(known_roles[:8])}",
+                        "roles": known_roles,
+                    })
+                    return
                 protocol.create_task(
                     task_id, title, body.get("description") or "",
-                    body.get("role_id") or "r1", body.get("acceptance_criteria") or "",
+                    role_id, body.get("acceptance_criteria") or "",
                     priority=body.get("priority") or "medium",
                     allowed_paths=allowed,
                     behavioral_check=body.get("behavioral_check") or "",
