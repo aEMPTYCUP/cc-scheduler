@@ -60,8 +60,29 @@ class CapabilityLocked(PermissionError):
     """Raised when a caller tries to toggle a locked (e.g. Doubao audit) switch."""
 
 
+class RealPoolSimulationGuard(PermissionError):
+    """Raised when a simulated worker is started against a production pool."""
+
+
 class WorkerError(RuntimeError):
     """A worker could not proceed (inactive executor, poison task, ...)."""
+
+
+# Whether the adapter currently wired into the supervisor is simulated. The
+# conservative default is True so a production pool is protected until a real
+# adapter explicitly registers itself via configure_adapter().
+_active_adapter_simulated = True
+
+
+def configure_adapter(simulated: bool) -> bool:
+    """Register whether the active worker adapter is simulated (ui_server)."""
+    global _active_adapter_simulated
+    _active_adapter_simulated = bool(simulated)
+    return _active_adapter_simulated
+
+
+def active_adapter_is_simulated() -> bool:
+    return _active_adapter_simulated
 
 
 # --------------------------------------------------------------------------- #
@@ -162,6 +183,11 @@ def start_worker(executor_id: str, node: str) -> Dict[str, Any]:
         if cap is None or not cap["enabled"]:
             raise WorkerError(
                 f"{executor_id} has no enabled {node} capability; turn the switch on first"
+            )
+        if protocol.get_pool_mode() == "production" and _active_adapter_simulated:
+            raise RealPoolSimulationGuard(
+                "真实任务池(production)禁止用模拟适配器 GO：SimulatedAdapter 会无真实代码/"
+                "审计地把任务假跑到 DONE。请先接入真实执行适配器，或在演示库(demo)上使用模拟。"
             )
         conn.execute(
             "INSERT INTO worker_sessions "
@@ -275,6 +301,10 @@ def select_next_task_for_node(node: str, executor_id: str) -> Optional[Dict[str,
 class WorkerAdapter:
     """Interface real executors implement. Methods drive the kernel state machine."""
 
+    # Real executors leave this False; only SimulatedAdapter sets True so the
+    # production-pool guard can refuse a fake run on a real task pool.
+    is_simulated = False
+
     def implement(self, task: Dict[str, Any], executor_id: str) -> str:
         raise NotImplementedError
 
@@ -291,6 +321,8 @@ class SimulatedAdapter(WorkerAdapter):
     acceptance_verdict chooses the REVIEW decision so tests/demos can exercise
     ACCEPTED / REWORK / NEEDS_HUMAN without a real claude subprocess.
     """
+
+    is_simulated = True
 
     def __init__(self, acceptance_verdict: str = "ACCEPTED",
                  step_delay: Optional[float] = None) -> None:
@@ -636,8 +668,14 @@ class WorkerSupervisor:
 # human integration + console snapshot
 # --------------------------------------------------------------------------- #
 
-def integrate_task(task_id: str, actor: str = "human") -> Dict[str, Any]:
-    """Manual ACCEPTED -> INTEGRATION -> DONE. Auto loops never integrate."""
+def integrate_task(task_id: str, actor: str = "human",
+                   repo_path: Optional[str] = None) -> Dict[str, Any]:
+    """Manual ACCEPTED -> INTEGRATION -> DONE. Auto loops never integrate.
+
+    N-02: when ``repo_path`` is given and the task has a recorded worktree, the
+    worktree is removed best-effort after DONE. Cleanup never blocks the DONE
+    transition -- a leftover worktree is a hygiene issue, not a fault.
+    """
     task = protocol.get_task(task_id)
     if not task:
         raise ValueError(f"task {task_id} not found")
@@ -646,6 +684,11 @@ def integrate_task(task_id: str, actor: str = "human") -> Dict[str, Any]:
     protocol.transition(task_id, "INTEGRATION", actor, "human: begin controlled integration")
     protocol.transition(task_id, "DONE", actor, "human: integration complete")
     integrated = protocol.get_task(task_id)
+    if repo_path and integrated.get("worktree_path"):
+        try:
+            protocol.remove_worktree(repo_path, task_id, force=True)
+        except Exception as exc:  # noqa: BLE001 - best-effort hygiene
+            integrated["_worktree_cleanup_error"] = f"{type(exc).__name__}: {exc}"
     return integrated
 
 
@@ -676,6 +719,9 @@ def console_state() -> Dict[str, Any]:
         "nodes": [{"id": node, "label": NODE_LABELS[node]} for node in NODES],
         "executors": executors,
         "sim_step_delay": get_sim_step_delay(),
+        "pool_mode": protocol.get_pool_mode(),
+        "adapter_simulated": _active_adapter_simulated,
+        "sim_go_blocked": protocol.get_pool_mode() == "production" and _active_adapter_simulated,
     }
 
 
@@ -722,6 +768,8 @@ def seed_demo_pool(role_id: str = "A3-backend-engineer") -> Dict[str, int]:
     protocol.transition("T-AUDIT-01", "IN_PROGRESS", "doubao", actor_executor_id="doubao")
     protocol.transition("T-AUDIT-01", "SUBMITTED", "doubao", actor_executor_id="doubao")
     protocol.transition("T-AUDIT-01", "REVIEW", "doubao", actor_executor_id="doubao")
+    # The demo pool is the sanctioned place for simulated workers.
+    protocol.set_pool_mode("demo")
 
     counts = {"READY": len(ready_specs), "REVIEW": 1}
     return counts

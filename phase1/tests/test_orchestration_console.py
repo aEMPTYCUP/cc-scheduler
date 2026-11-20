@@ -271,3 +271,63 @@ def test_console_state_carries_capabilities_and_sessions(db_path) -> None:
     assert "implement" in by_id["doubao"]["capabilities"]
     assert by_id["doubao"]["capabilities"]["acceptance"]["locked"] == 1
     assert "implement" in by_id["doubao"]["sessions"]
+
+
+def test_integrate_cleans_up_worktree_when_repo_path_given(db_path, tmp_path) -> None:
+    # N-02: DONE removes the isolated worktree best-effort when repo_path is
+    # provided; the DONE transition itself never blocks on cleanup.
+    import subprocess
+    from pathlib import Path
+
+    _make_role()
+    orchestrator.ensure_orchestrator()
+    tid = "T-WT-1"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+    (repo / "a.txt").write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-m", "init", "--no-verify"],
+                   check=True, capture_output=True)
+    protocol.create_task(tid, "t", "d", ROLE, "ac")
+    protocol.ready_task(tid)
+    protocol.atomic_claim(tid, agent_id="doubao", executor_id="doubao")
+    wt = protocol.create_worktree(str(repo), tid)
+    protocol.transition(tid, "IN_PROGRESS", "doubao", "x")
+    protocol.transition(tid, "SUBMITTED", "doubao", "x")
+    protocol.transition(tid, "REVIEW", "system", "x")
+    protocol.transition(tid, "ACCEPTED", "claude", "pass")
+    assert Path(wt).is_dir()
+
+    integrated = orchestrator.integrate_task(tid, repo_path=str(repo))
+    assert integrated["status"] == "DONE"
+    assert not Path(wt).exists()
+    assert "_worktree_cleanup_error" not in integrated
+
+
+def test_integrate_without_repo_path_keeps_worktree(db_path, tmp_path) -> None:
+    # Backwards compatible: no repo_path => no cleanup, worktree stays.
+    import subprocess
+    from pathlib import Path
+
+    _make_role()
+    orchestrator.ensure_orchestrator()
+    tid = "T-WT-2"
+    repo = tmp_path / "repo2"
+    repo.mkdir()
+    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+    (repo / "a.txt").write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-m", "init", "--no-verify"],
+                   check=True, capture_output=True)
+    protocol.create_task(tid, "t", "d", ROLE, "ac")
+    protocol.ready_task(tid)
+    protocol.atomic_claim(tid, agent_id="doubao", executor_id="doubao")
+    wt = protocol.create_worktree(str(repo), tid)
+    protocol.transition(tid, "IN_PROGRESS", "doubao", "x")
+    protocol.transition(tid, "SUBMITTED", "doubao", "x")
+    protocol.transition(tid, "REVIEW", "system", "x")
+    protocol.transition(tid, "ACCEPTED", "claude", "pass")
+    integrated = orchestrator.integrate_task(tid)
+    assert integrated["status"] == "DONE"
+    assert Path(wt).is_dir()
