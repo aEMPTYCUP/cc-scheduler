@@ -2,6 +2,7 @@
 """Hermetic tests for the headless Codex adapter (no real codex)."""
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -167,3 +168,77 @@ def test_main_drives_implement_with_codex_executor(db_path, tmp_path, monkeypatc
     rc = main(["--task", "T-711", "--repo", str(tmp_path / "repo"), "--executor", "codex"])
     assert rc == 0
     assert calls == [("T-711", "codex")]
+
+
+def test_sandbox_mode_is_env_overridable(monkeypatch, tmp_path):
+    # The Windows restricted-token sandbox depends on the Codex sandbox
+    # service accounts; when that provisioning is broken the CLI cannot spawn
+    # processes at all, so the mode must be overridable without code changes.
+    monkeypatch.delenv("DSH_CODEX_SANDBOX", raising=False)
+    adapter = CodexAdapter(repo_path=str(tmp_path / "repo"))
+    assert adapter.sandbox == "workspace-write"
+    monkeypatch.setenv("DSH_CODEX_SANDBOX", "danger-full-access")
+    adapter = CodexAdapter(repo_path=str(tmp_path / "repo"))
+    assert adapter.sandbox == "danger-full-access"
+    # An explicit argument still wins over the environment.
+    adapter = CodexAdapter(repo_path=str(tmp_path / "repo"), sandbox="read-only")
+    assert adapter.sandbox == "read-only"
+
+
+def test_stale_worktree_is_pruned_and_retried(db_path, tmp_path, monkeypatch):
+    # A crashed previous run leaves the worktree behind; the adapter must clean
+    # the stale state and retry instead of failing the task on FileExistsError.
+    import codex_adapter
+    import protocol
+
+    calls = []
+    git_calls = []
+
+    def fake_create(repo_path, task_id, base_ref="HEAD"):
+        calls.append(task_id)
+        if len(calls) == 1:
+            raise FileExistsError("Worktree already exists")
+        return str(tmp_path / "wt")
+
+    def fake_run(cmd, *args, **kwargs):
+        git_calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    monkeypatch.setattr(protocol, "create_worktree", fake_create)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    adapter = codex_adapter.CodexAdapter(repo_path=str(tmp_path / "repo"))
+    task = {"task_id": "T-STALE", "worktree_path": None}
+    assert adapter._ensure_worktree(task).endswith("wt")
+    assert calls == ["T-STALE", "T-STALE"]
+    # Cleanup ran: prune + branch delete (+ worktree remove when present).
+    assert any("worktree" in " ".join(c) and "prune" in " ".join(c) for c in git_calls)
+    assert any("branch" in " ".join(c) and "-D" in " ".join(c) for c in git_calls)
+
+
+def test_stale_branch_is_cleared_and_worktree_recreated(db_path, tmp_path, monkeypatch):
+    # A crashed run can leave the BRANCH behind too: git worktree add then
+    # exits 255 ("branch already exists"). The adapter must prune the
+    # registration, drop the branch and recreate deterministically.
+    import subprocess
+
+    import codex_adapter
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+    (repo / "a.txt").write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-m", "init", "--no-verify"],
+                   check=True, capture_output=True)
+    # Stale branch left behind by an earlier crashed run.
+    subprocess.run(["git", "-C", str(repo), "branch", "task/T-BRANCH"],
+                   check=True, capture_output=True)
+    protocol.ensure_schema()
+
+    adapter = codex_adapter.CodexAdapter(repo_path=str(repo))
+    path = codex_adapter._recreate_worktree(str(repo), "T-BRANCH")
+    assert Path(path).is_dir()
+    # The stale branch was replaced by a fresh worktree branch.
+    out = subprocess.run(["git", "-C", str(repo), "branch", "--list", "task/T-BRANCH"],
+                         capture_output=True, text=True)
+    assert "task/T-BRANCH" in out.stdout

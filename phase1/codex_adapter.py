@@ -11,6 +11,7 @@ belongs to the independent reviewer node.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -24,6 +25,35 @@ from real_adapters import (
     default_head_resolver,
     default_subprocess_runner,
 )
+
+
+def _recreate_worktree(repo_path: str, task_id: str) -> str:
+    """Create the task worktree, clearing stale state left by a crashed run.
+
+    A previous attempt can leave both the worktree directory AND its branch
+    behind (git worktree add then fails with exit 255 because the branch
+    exists). Recover deterministically: prune the registration, drop the stale
+    branch, remove the directory, then create it once more.
+    """
+    import subprocess as _sp
+
+    repo = Path(repo_path).resolve()
+    target = repo.parent / f"wt-{task_id}"
+    branch = f"task/{task_id}"
+    try:
+        return protocol.create_worktree(repo_path, task_id)
+    except (FileExistsError, _sp.CalledProcessError) as exc:
+        _sp.run(["git", "-C", str(repo), "worktree", "prune"],
+                capture_output=True, text=True)
+        _sp.run(["git", "-C", str(repo), "branch", "-D", branch],
+                capture_output=True, text=True)
+        if target.exists():
+            _sp.run(["git", "-C", str(repo), "worktree", "remove", "--force", str(target)],
+                    capture_output=True, text=True)
+            if target.exists():
+                _sp.run(["cmd", "/c", "rmdir", "/s", "/q", str(target)],
+                        capture_output=True, text=True)
+        return protocol.create_worktree(repo_path, task_id)
 
 
 class CodexAdapter(WorkerAdapter):
@@ -45,7 +75,7 @@ class CodexAdapter(WorkerAdapter):
         runner: Optional[Callable] = None,
         worktree_factory: Optional[Callable[[Dict[str, Any]], str]] = None,
         head_resolver: Optional[Callable[[str], str]] = None,
-        sandbox: str = "workspace-write",
+        sandbox: str = "",
         approval: str = "never",
         model: Optional[str] = None,
         extra_config: Optional[List[str]] = None,
@@ -53,10 +83,16 @@ class CodexAdapter(WorkerAdapter):
         prompt_extra: str = "",
     ) -> None:
         self.repo_path = str(repo_path)
+        # Sandbox mode: DSH_CODEX_SANDBOX overrides the default. On Windows the
+        # restricted-token sandbox needs the Codex sandbox service accounts
+        # (CodexSandboxOffline/Online); when that provisioning is broken the
+        # codex CLI cannot spawn any process (CreateProcessWithLogonW failed: 2)
+        # and the only working mode is "danger-full-access". Tasks still run in
+        # an isolated worktree and the prompt forbids destructive git verbs.
+        self.sandbox = sandbox or os.environ.get("DSH_CODEX_SANDBOX") or "workspace-write"
         self._runner = runner or default_subprocess_runner
         self._worktree_factory = worktree_factory
         self._head_resolver = head_resolver or default_head_resolver
-        self.sandbox = sandbox
         self.approval = approval
         self.model = model
         self.extra_config = list(extra_config or [])
@@ -69,7 +105,7 @@ class CodexAdapter(WorkerAdapter):
             return existing
         if self._worktree_factory is not None:
             return self._worktree_factory(task)
-        return protocol.create_worktree(self.repo_path, task["task_id"])
+        return _recreate_worktree(self.repo_path, task["task_id"])
 
     def _build_argv(self, worktree: str, output_file: str) -> List[str]:
         """The fixed ``codex exec`` argv (without the executable path)."""
