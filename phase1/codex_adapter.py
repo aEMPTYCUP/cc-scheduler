@@ -10,6 +10,7 @@ belongs to the independent reviewer node.
 """
 from __future__ import annotations
 
+import argparse
 import shutil
 import tempfile
 from pathlib import Path
@@ -146,3 +147,32 @@ class CodexAdapter(WorkerAdapter):
                                     f"adapter error: {type(exc).__name__}")
             except Exception:  # noqa: BLE001 - last resort; the worker loop must survive
                 pass
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """Standalone entry: drive one READY task to REVIEW via headless codex.
+
+    ``python codex_adapter.py --task T-XXX --repo C:/path/to/repo``
+    """
+    parser = argparse.ArgumentParser(description="Implement one task via headless codex exec")
+    parser.add_argument("--task", required=True, help="task_id to implement")
+    parser.add_argument("--repo", required=True, help="repository path used for worktrees")
+    parser.add_argument("--executor", default="codex", help="executor_id (default codex)")
+    parser.add_argument("--model", default=None, help="codex model id")
+    parser.add_argument("--sandbox", default="workspace-write",
+                        help="codex sandbox (read-only|workspace-write|danger-full-access)")
+    parser.add_argument("--timeout", type=int, default=1800, help="subprocess timeout seconds")
+    args = parser.parse_args(argv)
+
+    task = protocol.get_task(args.task)
+    if task is None:
+        raise SystemExit(f"task {args.task} not found in the console pool")
+    adapter = CodexAdapter(args.repo, sandbox=args.sandbox, model=args.model,
+                           timeout=args.timeout)
+    summary = adapter.implement(task, args.executor)
+    print(summary)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

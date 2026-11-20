@@ -139,3 +139,31 @@ def test_accept_and_integrate_are_refused(db_path, tmp_path):
         adapter.accept({}, "codex")
     with pytest.raises(PermissionError):
         adapter.integrate({}, "codex")
+
+
+def test_main_requires_task_and_repo():
+    from codex_adapter import main
+    with pytest.raises(SystemExit):
+        main([])
+
+
+def test_main_unknown_task_exits(db_path):
+    from codex_adapter import main
+    protocol.ensure_schema()
+    with pytest.raises(SystemExit):
+        main(["--task", "T-NOPE", "--repo", "x"])
+
+
+def test_main_drives_implement_with_codex_executor(db_path, tmp_path, monkeypatch):
+    from codex_adapter import CodexAdapter, main
+    tid = _ready_task("T-711")
+    calls = []
+
+    def fake_implement(self, task, executor_id):
+        calls.append((task["task_id"], executor_id))
+        return "T-711 implemented by headless codex -> REVIEW"
+
+    monkeypatch.setattr(CodexAdapter, "implement", fake_implement)
+    rc = main(["--task", "T-711", "--repo", str(tmp_path / "repo"), "--executor", "codex"])
+    assert rc == 0
+    assert calls == [("T-711", "codex")]
