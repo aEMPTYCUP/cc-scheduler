@@ -9,9 +9,20 @@ with Ctrl-C or the orchestrator supervisor.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
+
+# protocol.DB_PATH is resolved at import time, so a --db override must be
+# applied BEFORE bridge_sync (which imports protocol) is loaded. This lets the
+# scheduled-task invocation (which has no PHASE1_DB in its environment) point
+# the projector at the real console pool.
+_early = argparse.ArgumentParser(add_help=False)
+_early.add_argument("--db", default=None)
+_early_args, _ = _early.parse_known_args()
+if _early_args.db:
+    os.environ["PHASE1_DB"] = _early_args.db
 
 PHASE1_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PHASE1_DIR))
@@ -25,6 +36,8 @@ def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(description="Resident bridge-outbox projector")
     parser.add_argument("--bridge-root", default=str(DEFAULT_BRIDGE_ROOT),
                         help="bridge-live data root")
+    parser.add_argument("--db", default=None,
+                        help="console pool DB (PHASE1_DB); applied before protocol import")
     parser.add_argument("--interval", type=int, default=30,
                         help="seconds between sync_once passes (default 30)")
     parser.add_argument("--once", action="store_true", help="run a single pass and exit")
