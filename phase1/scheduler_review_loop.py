@@ -23,12 +23,24 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 PHASE1_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(PHASE1_DIR))
 
 CHART = r"C:\Users\32831\wt\dj-chart"
+
+# 执行器分工（用户 2026-11-23 定）：MiniMax 于 2026-11-24 02:06 结束冷却，
+# 此后**不再给 Claude Code 派新任务，新任务一律给 codex**（codex 本就走 MiniMax）。
+# 02:06 之前（Claude 的火山 AgentPlan 可用）仍由 Claude 执行。
+CODEX_CUTOFF = datetime(2026, 11, 24, 2, 6)
+
+
+def pick_executor(now: datetime | None = None) -> str:
+    """按时间点选执行器：02:06 之后 codex，之后不再派新任务给 Claude。"""
+    now = now or datetime.now()
+    return "codex" if now >= CODEX_CUTOFF else "claude"
 BRIDGE = r"C:\Users\32831\wt\bridge-live"
 ROUTE_DIR = Path(os.environ.get("DSH_ROUTE_HOME", r"C:\Users\32831\.agent-bridge-route")) / "route"
 TARGET_PREFIX = "T-ALERT-"
@@ -124,11 +136,30 @@ def run_review(item: dict) -> dict:
             executor_id="claude")
         protocol.ready_task(local_id)
 
+    # 审核必须在**独立工作区**：不能在被审方的工作区里写文件，
+    # 否则审核产物会污染交付方（正是 T-ALERT-002 首轮被误判的同类问题）。
+    review_wt = r"C:\Users\32831\wt\wt-REVIEW-%s" % task_id
+    base = "feature/plan-link"
+    branch = "review/%s" % task_id
+    wt_path = Path(review_wt)
+    if not wt_path.is_dir():
+        git("branch", "-D", branch, check=False)
+        git("worktree", "add", "-b", branch, review_wt, base)
     task = protocol.get_task(local_id)
-    task["worktree_path"] = card_worktree(task_id) or task.get("worktree_path")
-    adapter = ClaudeSubprocessAdapter(CHART, timeout=3600)
-    summary = adapter.implement(task, "claude")
-    return {"task_id": task_id, "summary": summary,
+    task["worktree_path"] = review_wt
+    executor = pick_executor()
+    if executor == "codex":
+        # 02:06 之后：新任务一律 codex（它走 MiniMax）。
+        from codex_adapter import CodexAdapter
+        from real_adapters import commit_whitelisted
+        adapter = CodexAdapter(
+            CHART, timeout=3600,
+            committer=lambda wt, tsk: commit_whitelisted(
+                wt, tsk, "task %s: review via codex" % tsk.get("task_id")))
+    else:
+        adapter = ClaudeSubprocessAdapter(CHART, timeout=3600)
+    summary = adapter.implement(task, executor)
+    return {"task_id": task_id, "executor": executor, "summary": summary,
             "status": protocol.get_task(local_id)["status"]}
 
 
@@ -149,7 +180,8 @@ def main() -> int:
                 log("[SKIP] %s 已有审核产物" % task_id)
                 continue
             if args.dry_run:
-                log("[DRY] 将审核 %s（seq=%s）" % (task_id, item.get("seq")))
+                log("[DRY] 将审核 %s（seq=%s）| 执行器=%s" % (
+                    task_id, item.get("seq"), pick_executor()))
                 continue
             log("[REVIEW] 开始审核 %s" % task_id)
             try:
