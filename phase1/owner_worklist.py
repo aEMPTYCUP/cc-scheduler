@@ -47,7 +47,10 @@ PARKED_STATUSES = {"needs_human", "blocked"}
 LIVE_STATUSES = CLAIMABLE_STATUSES | REVIEW_STATUSES | ACTIVE_STATUSES | PARKED_STATUSES
 
 # 控制台任务列表状态词表
-CONSOLE_PASSED = {"ACCEPTED", "DONE"}
+# 控制台侧「验收已过」的状态。INTEGRATION 必须在内：人工闸门把已通过验收的单
+# 推进到 INTEGRATION，若不算通过，闸门会永远把它们记成 not_passed，
+# 导致任何一个 owner 都永远无法 EXIT（深蓝king 2026-11-23 实测发现）。
+CONSOLE_PASSED = {"ACCEPTED", "INTEGRATION", "DONE"}
 CONSOLE_PARKED = {"NEEDS_HUMAN"}
 
 
