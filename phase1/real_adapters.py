@@ -255,7 +255,7 @@ def default_subprocess_runner(cmd: List[str], cwd: str, input_text: str, timeout
 def default_head_resolver(worktree: str) -> str:
     result = subprocess.run(
         ["git", "-C", worktree, "rev-parse", "HEAD"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     if result.returncode != 0:
         raise RealAdapterError(f"cannot read HEAD in {worktree}: {result.stderr.strip()}")
@@ -279,15 +279,15 @@ def _recreate_worktree(repo_path: str, task_id: str) -> str:
         return protocol.create_worktree(repo_path, task_id)
     except (FileExistsError, _sp.CalledProcessError):
         _sp.run(["git", "-C", str(repo), "worktree", "prune"],
-                capture_output=True, text=True)
+                capture_output=True, text=True, encoding="utf-8", errors="replace")
         _sp.run(["git", "-C", str(repo), "branch", "-D", branch],
-                capture_output=True, text=True)
+                capture_output=True, text=True, encoding="utf-8", errors="replace")
         if target.exists():
             _sp.run(["git", "-C", str(repo), "worktree", "remove", "--force", str(target)],
-                    capture_output=True, text=True)
+                    capture_output=True, text=True, encoding="utf-8", errors="replace")
             if target.exists():
                 _sp.run(["cmd", "/c", "rmdir", "/s", "/q", str(target)],
-                        capture_output=True, text=True)
+                        capture_output=True, text=True, encoding="utf-8", errors="replace")
         return protocol.create_worktree(repo_path, task_id)
 
 

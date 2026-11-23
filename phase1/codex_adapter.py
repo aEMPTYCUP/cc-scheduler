@@ -44,15 +44,15 @@ def _recreate_worktree(repo_path: str, task_id: str) -> str:
         return protocol.create_worktree(repo_path, task_id)
     except (FileExistsError, _sp.CalledProcessError) as exc:
         _sp.run(["git", "-C", str(repo), "worktree", "prune"],
-                capture_output=True, text=True)
+                capture_output=True, text=True, encoding="utf-8", errors="replace")
         _sp.run(["git", "-C", str(repo), "branch", "-D", branch],
-                capture_output=True, text=True)
+                capture_output=True, text=True, encoding="utf-8", errors="replace")
         if target.exists():
             _sp.run(["git", "-C", str(repo), "worktree", "remove", "--force", str(target)],
-                    capture_output=True, text=True)
+                    capture_output=True, text=True, encoding="utf-8", errors="replace")
             if target.exists():
                 _sp.run(["cmd", "/c", "rmdir", "/s", "/q", str(target)],
-                        capture_output=True, text=True)
+                        capture_output=True, text=True, encoding="utf-8", errors="replace")
         return protocol.create_worktree(repo_path, task_id)
 
 
