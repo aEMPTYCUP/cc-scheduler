@@ -81,6 +81,7 @@ class CodexAdapter(WorkerAdapter):
         extra_config: Optional[List[str]] = None,
         timeout: int = 1800,
         prompt_extra: str = "",
+        committer: Optional[Callable[[str, Dict[str, Any]], Optional[str]]] = None,
     ) -> None:
         self.repo_path = str(repo_path)
         # Sandbox mode: DSH_CODEX_SANDBOX overrides the default. On Windows the
@@ -89,15 +90,30 @@ class CodexAdapter(WorkerAdapter):
         # codex CLI cannot spawn any process (CreateProcessWithLogonW failed: 2)
         # and the only working mode is "danger-full-access". Tasks still run in
         # an isolated worktree and the prompt forbids destructive git verbs.
-        self.sandbox = sandbox or os.environ.get("DSH_CODEX_SANDBOX") or "workspace-write"
+        # .strip() matters: cmd scripts that write `set VAR=value && cmd` leave a
+        # trailing space in the value, which codex rejects as an invalid
+        # --sandbox mode.
+        self.sandbox = (sandbox or os.environ.get("DSH_CODEX_SANDBOX")
+                        or "workspace-write").strip()
         self._runner = runner or default_subprocess_runner
         self._worktree_factory = worktree_factory
         self._head_resolver = head_resolver or default_head_resolver
         self.approval = approval
-        self.model = model
+        self.model = (model or os.environ.get("DSH_CODEX_MODEL") or "").strip() or None
+        self._committer = committer
         self.extra_config = list(extra_config or [])
         self.timeout = timeout
         self.prompt_extra = prompt_extra
+        # Windows sandbox note: the restricted-token sandbox denies
+        # powershell.exe (exit 5 "access denied"); cmd.exe is the working shell
+        # (verified 2026-11-20: `shell: cmd.exe, login: false` -> exit 0).
+        self.windows_note = (
+            "\n\n【执行环境提示（Windows）】沙箱内 powershell.exe 会被拒绝（exit 5），"
+            "执行命令请使用 cmd.exe（如 shell=cmd.exe, login=false），"
+            "不要用 PowerShell 管道语法。"
+            "沙箱内禁止写入 .git，因此不要尝试 git add/commit——"
+            "平台会在你完成后只提交白名单内的文件。\n"
+        )
 
     def _ensure_worktree(self, task: Dict[str, Any]) -> str:
         existing = task.get("worktree_path")
@@ -141,7 +157,8 @@ class CodexAdapter(WorkerAdapter):
             output_file = str(Path(tempfile.gettempdir()) / f"codex-last-{tid}.txt")
             cmd = [codex] + self._build_argv(worktree, output_file)
             result = self._runner(cmd, worktree,
-                                  build_implement_prompt(task) + self.prompt_extra,
+                                  build_implement_prompt(task) + self.prompt_extra
+                                  + self.windows_note,
                                   self.timeout)
 
             returncode = getattr(result, "returncode", 1)
@@ -151,7 +168,11 @@ class CodexAdapter(WorkerAdapter):
                     f"codex exited {returncode}: {str(output)[-400:]}"
                 )
 
-            sha = self._head_resolver(worktree)
+            # The Windows sandbox denies writes to .git, so the executor cannot
+            # commit itself; the platform commits the whitelisted paths (never
+            # git add -A). Whitelist-only staging is a platform red line.
+            committed = self._committer(worktree, task) if self._committer else None
+            sha = committed or self._head_resolver(worktree)
             protocol.add_evidence(tid, "cli_log", f"codex-headless:{tid}",
                                   executor_id, sync_audit=False)
             protocol.add_evidence(tid, "commit_sha", f"commit:{sha}", executor_id,

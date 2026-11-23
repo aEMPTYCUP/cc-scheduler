@@ -12,5 +12,6 @@ __pycache__/
 *.db
 phase1/task-packages/
 phase1/logs/
+phase1/.local/
 phase1/ui/data.json
 phase1/ui/data.js

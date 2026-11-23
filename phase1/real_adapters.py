@@ -291,6 +291,54 @@ def _recreate_worktree(repo_path: str, task_id: str) -> str:
         return protocol.create_worktree(repo_path, task_id)
 
 
+def commit_whitelisted(worktree: str, task: Dict[str, Any], message: str) -> str:
+    """Commit ONLY the whitelisted paths and return the new HEAD.
+
+    Executors that run inside a sandbox cannot write .git (the sandbox denies
+    it on purpose), so the platform performs the commit itself. Doing it here
+    also enforces the platform red line: whitelist-only staging, never
+    ``git add -A`` (which would sweep in another task's evidence files).
+
+    Returns the pre-existing HEAD when nothing changed.
+    """
+    import subprocess as _sp
+
+    allowed = json.loads(task.get("allowed_paths_json") or "[]")
+    if not allowed:
+        raise RealAdapterError("task has no allowed_paths; refusing to commit anything")
+    root = Path(worktree)
+
+    def _git(*args: str) -> "_sp.CompletedProcess":
+        return _sp.run(["git", "-C", str(root), *args],
+                        capture_output=True, text=True, encoding="utf-8",
+                        errors="replace")
+
+    before = _git("rev-parse", "HEAD")
+    if before.returncode != 0:
+        raise RealAdapterError(f"cannot read HEAD in {worktree}: {before.stderr.strip()}")
+    head_before = before.stdout.strip()
+
+    paths = [p for p in allowed if (root / p).exists() or (root / p).is_dir()]
+    if not paths:
+        return head_before
+    staged = _git("add", "--", *paths)
+    if staged.returncode != 0:
+        raise RealAdapterError(f"git add failed: {staged.stderr.strip()[:200]}")
+    status = _git("status", "--porcelain", "--", *paths)
+    if not status.stdout.strip():
+        return head_before  # nothing to commit
+    commit = _git("commit", "-m", message, "--", *paths)
+    if commit.returncode != 0:
+        message_text = (commit.stdout + commit.stderr).strip()
+        if "Please tell me who you are" in message_text or "empty ident" in message_text:
+            commit = _git("-c", "user.name=DSH Platform", "-c", "user.email=dsh-platform@local",
+                          "commit", "-m", message, "--", *paths)
+        if commit.returncode != 0:
+            raise RealAdapterError(f"git commit failed: {(commit.stdout + commit.stderr).strip()[:200]}")
+    after = _git("rev-parse", "HEAD")
+    return after.stdout.strip() if after.returncode == 0 else head_before
+
+
 class ClaudeSubprocessAdapter(WorkerAdapter):
     """Real implement-node executor driving headless `claude -p` in a worktree.
 

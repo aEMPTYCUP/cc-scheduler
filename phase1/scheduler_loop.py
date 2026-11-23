@@ -12,11 +12,56 @@ Acceptance is NEVER auto-run here: it belongs to the independent reviewer node
 from __future__ import annotations
 
 import argparse
+import os
 import time
 from typing import Callable, Dict, List, Optional
 
 import orchestrator
 from orchestrator import WorkerAdapter
+
+
+def run_preflight(bridge_root: Optional[str] = None,
+                  repo_path: Optional[str] = None) -> Dict:
+    """Environment preflight (platform_doctor) — fail-closed dispatch gate.
+
+    Every environment defect we hit today was discovered reactively, in the
+    middle of a real task. The scheduler therefore refuses to dispatch when the
+    platform contracts (bridge mailbox, console DB, git repo, executor CLIs)
+    are not healthy. Set DSH_SKIP_PREFLIGHT=1 to bypass (tests, diagnostics).
+    """
+    if os.environ.get("DSH_SKIP_PREFLIGHT") == "1":
+        return {"ok": True, "skipped": True, "failed": [], "checks": []}
+    try:
+        import platform_doctor
+    except Exception as exc:  # noqa: BLE001 - never block on a broken doctor
+        return {"ok": True, "skipped": True, "failed": [], "error": str(exc)[:120]}
+    argv = ["--skip-executors"]
+    if bridge_root:
+        argv += ["--bridge-root", bridge_root]
+    if repo_path:
+        argv += ["--repo", repo_path]
+    import io
+    import contextlib
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        report = platform_doctor.Report()
+        platform_doctor.check_python(report)
+        platform_doctor.check_git(report, repo_path)
+        platform_doctor.check_stale_worktrees(report, repo_path)
+        platform_doctor.check_bridge_mailbox(report, bridge_root or
+                                             str(platform_doctor.os.environ.get(
+                                                 "DSH_BRIDGE_ROOT",
+                                                 r"C:/Users/32831/wt/bridge-live")))
+        platform_doctor.check_console_db(report, os.environ.get(
+            "PHASE1_DB",
+            r"C:/Users/32831/cc-scheduler/phase1/.local/queue.db"))
+    failed = [c for c in report.failed()]
+    return {
+        "ok": not failed,
+        "skipped": False,
+        "failed": [{"name": c.name, "detail": c.detail, "fix": c.fix} for c in failed],
+        "checks": len(report.checks),
+    }
 
 
 def run_schedule_once(
@@ -26,6 +71,7 @@ def run_schedule_once(
     *,
     max_tasks: int = 1,
     quota_hook: Optional[Callable[[], Optional[str]]] = None,
+    preflight: Optional[Callable[[], Dict]] = None,
 ) -> List[Dict[str, Optional[str]]]:
     """One pass: open a worker session and drive READY tasks through `node`.
 
@@ -35,6 +81,18 @@ def run_schedule_once(
     exception pauses the whole pass rather than letting it run unbounded
     (R-87: the quota query must never flip to fail-open).
     """
+    if preflight is not None:
+        try:
+            state = preflight()
+        except Exception as exc:  # noqa: BLE001 - fail closed
+            state = {"ok": False, "failed": [{"name": "preflight",
+                                              "detail": f"{type(exc).__name__}: {exc}",
+                                              "fix": "fix the preflight error"}]}
+        if not state.get("ok", True):
+            return [{"status": "preflight_failed", "task_id": None,
+                     "error": "; ".join(f.get("name", "?") + ": " + f.get("detail", "")
+                                        for f in state.get("failed", []))[:400]}]
+
     if quota_hook is not None:
         try:
             pause = quota_hook()
@@ -76,15 +134,26 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--watch-interval", type=int, default=900,
                         help="seconds between passes in --watch mode (default 15 min)")
     parser.add_argument("--once", action="store_true", help="run a single pass and exit")
+    parser.add_argument("--bridge-root", default=os.environ.get(
+        "DSH_BRIDGE_ROOT", r"C:/Users/32831/wt/bridge-live"),
+        help="bridge data root (used by the preflight)")
+    parser.add_argument("--no-preflight", action="store_true",
+                        help="skip the environment preflight (diagnostics only)")
     parser.add_argument("--model", default=None, help="codex model override")
     args = parser.parse_args(argv)
 
     def factory() -> WorkerAdapter:
         if args.executor == "codex":
             from codex_adapter import CodexAdapter
+            from real_adapters import commit_whitelisted
             if not args.repo:
                 raise SystemExit("--repo is required for the codex adapter")
-            return CodexAdapter(args.repo, model=args.model)
+            # The Windows sandbox denies .git writes, so the platform commits
+            # the whitelisted paths itself after the executor finishes.
+            return CodexAdapter(
+                args.repo, model=args.model,
+                committer=lambda wt, task: commit_whitelisted(
+                    wt, task, f"task {task.get('task_id')}: implement via codex"))
         if args.executor == "claude":
             from real_adapters import ClaudeSubprocessAdapter
             if not args.repo:
@@ -93,14 +162,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         from orchestrator import SimulatedAdapter
         return SimulatedAdapter()
 
+    preflight = (None if args.no_preflight else
+                 (lambda: run_preflight(args.bridge_root, args.repo)))
+
     if args.once:
         for row in run_schedule_once(args.executor, args.node, factory,
-                                     max_tasks=args.max_tasks):
+                                     max_tasks=args.max_tasks, preflight=preflight):
             print(row)
         return 0
     while True:
         for row in run_schedule_once(args.executor, args.node, factory,
-                                     max_tasks=args.max_tasks):
+                                     max_tasks=args.max_tasks, preflight=preflight):
             print(row, flush=True)
         time.sleep(max(args.watch_interval, 30))
 

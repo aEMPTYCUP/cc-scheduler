@@ -220,4 +220,6 @@ def test_v2_to_v3_migration_widens_node_check(db_path) -> None:
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
                 "INSERT INTO executor_capabilities VALUES ('human','teleport',1,0,'2026-01-03')")
-        assert protocol.SCHEMA_VERSION == 3
+        # Migration chain brings the old v2 DB all the way to the current version.
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == protocol.SCHEMA_VERSION
+        assert protocol.SCHEMA_VERSION >= 3

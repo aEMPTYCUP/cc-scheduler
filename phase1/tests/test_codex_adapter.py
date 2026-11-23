@@ -242,3 +242,50 @@ def test_stale_branch_is_cleared_and_worktree_recreated(db_path, tmp_path, monke
     out = subprocess.run(["git", "-C", str(repo), "branch", "--list", "task/T-BRANCH"],
                          capture_output=True, text=True)
     assert "task/T-BRANCH" in out.stdout
+
+
+def test_prompt_tells_codex_to_use_cmd_shell(db_path, tmp_path):
+    # Verified 2026-11-20: inside the Windows sandbox powershell.exe is denied
+    # (exit 5) while cmd.exe works. The adapter must tell codex this.
+    runner = FakeRunner()
+    adapter = _adapter(tmp_path, runner)
+    tid = _ready_task("T-720")
+    (tmp_path / "wt").mkdir(parents=True, exist_ok=True)
+    adapter.implement(protocol.get_task(tid), "codex")
+    prompt = runner.calls[0]["prompt"]
+    assert "cmd.exe" in prompt
+    assert "powershell" in prompt.lower()
+
+
+def test_sandbox_env_value_is_stripped(monkeypatch, tmp_path):
+    # cmd scripts produce `set VAR=value && ...` -> the value keeps a trailing
+    # space, which codex rejects as an invalid --sandbox mode.
+    monkeypatch.setenv("DSH_CODEX_SANDBOX", "workspace-write ")
+    adapter = CodexAdapter(repo_path=str(tmp_path / "repo"))
+    assert adapter.sandbox == "workspace-write"
+    monkeypatch.setenv("DSH_CODEX_SANDBOX", " danger-full-access\n")
+    adapter = CodexAdapter(repo_path=str(tmp_path / "repo"))
+    assert adapter.sandbox == "danger-full-access"
+
+
+def test_platform_commits_whitelisted_paths_when_executor_cannot(db_path, tmp_path):
+    # The Windows sandbox denies .git writes, so the executor cannot commit;
+    # the platform commits the whitelisted paths itself (never git add -A).
+    import subprocess
+
+    commits = []
+
+    def fake_committer(worktree, task):
+        commits.append((worktree, task["task_id"]))
+        return "f" * 40
+
+    runner = FakeRunner()
+    adapter = CodexAdapter(repo_path=str(tmp_path / "repo"), runner=runner,
+                           worktree_factory=lambda task: str(tmp_path / "wt"),
+                           head_resolver=lambda wt: "a" * 40,
+                           committer=fake_committer)
+    tid = _ready_task("T-730")
+    (tmp_path / "wt").mkdir(parents=True, exist_ok=True)
+    adapter.implement(protocol.get_task(tid), "codex")
+    assert commits and commits[0][1] == "T-730"
+    assert protocol.get_task(tid)["status"] == "REVIEW"

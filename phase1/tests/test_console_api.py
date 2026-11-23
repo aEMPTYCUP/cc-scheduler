@@ -160,3 +160,16 @@ def test_create_task_invalid_allowed_paths_is_400(http_server) -> None:
         "task_id": "T-API-3", "title": "t", "allowed_paths": 42,
     })
     assert status == 400
+
+
+def test_dispatch_requires_a_known_executor(http_server) -> None:
+    # N-06 dispatch API: the board dispatches READY tasks to a real executor.
+    status, body = _call(http_server, "POST", "/api/dispatch", {"executor_id": ""})
+    assert status == 400
+    assert "executor_id" in body["error"]
+
+
+def test_dispatch_rejects_a_non_ready_task(http_server) -> None:
+    status, body = _call(http_server, "POST", "/api/dispatch",
+                         {"executor_id": "claude", "task_id": "T-NOT-READY"})
+    assert status in (404, 409)

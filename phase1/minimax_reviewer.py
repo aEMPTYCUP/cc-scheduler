@@ -155,6 +155,25 @@ def _git(worktree: str, *args: str) -> subprocess.CompletedProcess:
                           encoding="utf-8", errors="replace")
 
 
+def _recorded_worktree(task: Optional[Dict[str, Any]]) -> Optional[Path]:
+    """The authoritative worktree path recorded on the task row.
+
+    The platform's own executors create worktrees next to the repository
+    (protocol.create_worktree -> <repo>.parent/wt-<id>), while the bridge's
+    doubao worktrees live under WORKTREE_ROOT. Guessing by naming convention
+    made the reviewer look at a non-existent directory and judge every such
+    task as "no implementation" (false REWORK, 2026-11-20).
+    """
+    if not task:
+        return None
+    recorded = task.get("worktree_path")
+    if isinstance(recorded, str) and recorded.strip():
+        candidate = Path(recorded.strip())
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
 def _worktree_for(tid: str) -> Optional[Path]:
     for suffix in ("-doubao", ""):
         candidate = WORKTREE_ROOT / f"{tid}{suffix}"
@@ -165,7 +184,7 @@ def _worktree_for(tid: str) -> Optional[Path]:
 
 def _gather_evidence(task: Dict[str, Any]) -> Dict[str, Any]:
     tid = task["task_id"]
-    wt = _worktree_for(tid)
+    wt = _recorded_worktree(task) or _worktree_for(tid)
     evidence: Dict[str, Any] = {"worktree": str(wt) if wt else None,
                                 "head": None, "diff_stat": "", "diff": "", "changed": [],
                                 "file_contents": "", "checks": "", "has_runnable_check": False}
@@ -670,7 +689,7 @@ def integration_preview() -> List[Dict[str, Any]]:
         accepted = [r[0] for r in conn.execute(
             "SELECT task_id FROM tasks WHERE status='ACCEPTED' ORDER BY task_id")]
     for tid in accepted:
-        wt = _worktree_for(tid)
+        wt = _recorded_worktree(task) or _worktree_for(tid)
         if not wt:
             reports.append({"task_id": tid, "verdict": "no-worktree"})
             continue

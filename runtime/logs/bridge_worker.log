@@ -1,0 +1,808 @@
+Traceback (most recent call last):
+  File "C:\Users\32831\wt\agent-bridge-implementation\.claude\agent_bridge\worker.py", line 115, in process_available
+    store.finish(path, "completed")
+  File "C:\Users\32831\wt\agent-bridge-implementation\.claude\agent_bridge\store.py", line 219, in finish
+    raise ValueError("message is not in processing")
+ValueError: message is not in processing
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\32831\wt\agent-bridge-implementation\.claude\agent_bridge\live_controller.py", line 88, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "C:\Users\32831\wt\agent-bridge-implementation\.claude\agent_bridge\live_controller.py", line 78, in main
+    result = run_round(
+             ^^^^^^^^^^
+  File "C:\Users\32831\wt\agent-bridge-implementation\.claude\agent_bridge\live_controller.py", line 45, in run_round
+    first_pass = process_available(store, router, audit_only)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\32831\wt\agent-bridge-implementation\.claude\agent_bridge\worker.py", line 118, in process_available
+    store.finish(path, "dead-letter")
+  File "C:\Users\32831\wt\agent-bridge-implementation\.claude\agent_bridge\store.py", line 219, in finish
+    raise ValueError("message is not in processing")
+ValueError: message is not in processing
+[2026/11/19 周四 11:14:48.63] bridge_worker round exited rc=1 
+{
+  "ok": true,
+  "data_root": "C:\\Users\\32831\\wt\\bridge-live",
+  "routed_first_pass": [],
+  "audits": [],
+  "routed_second_pass": []
+}
+[2026/11/19 周四 12:10:44.46] bridge_worker round exited rc=0 
+{
+  "ok": true,
+  "data_root": "C:\\Users\\32831\\wt\\bridge-live",
+  "routed_first_pass": [],
+  "audits": [],
+  "routed_second_pass": []
+}
+[2026/11/19 周四 13:01:03.58] bridge_worker round exited rc=0 
+{
+  "ok": true,
+  "data_root": "C:\\Users\\32831\\wt\\bridge-live",
+  "routed_first_pass": [],
+  "audits": [],
+  "routed_second_pass": []
+}
+[2026/11/19 周四 14:01:24.27] bridge_worker round exited rc=0 
+{
+  "ok": true,
+  "data_root": "C:\\Users\\32831\\wt\\bridge-live",
+  "routed_first_pass": [],
+  "audits": [],
+  "routed_second_pass": []
+}
+[2026/11/19 周四 15:01:34.99] bridge_worker round exited rc=0 
+{
+  "ok": true,
+  "data_root": "C:\\Users\\32831\\wt\\bridge-live",
+  "routed_first_pass": [],
+  "audits": [],
+  "routed_second_pass": []
+}
+[2026/11/19 周四 16:01:13.39] bridge_worker round exited rc=0 
+{
+  "ok": true,
+  "data_root": "C:\\Users\\32831\\wt\\bridge-live",
+  "routed_first_pass": [],
+  "audits": [],
+  "routed_second_pass": []
+}
+[2026/11/19 周四 17:01:30.82] bridge_worker round exited rc=0 
+{
+  "ok": true,
+  "data_root": "C:\\Users\\32831\\wt\\bridge-live",
+  "routed_first_pass": [
+    {
+      "event_id": null,
+      "route": "acceptance",
+      "error": null
+    }
+  ],
+  "audits": [
+    {
+      "audit_run_id": "audit-delivery-T-188-eb5f8ae7636a4692a97618c88f58088a",
+      "status": "dead-letter",
+      "parked_in": "dead-letter",
+      "error": "independent audit did not return structured output"
+    }
+  ],
+  "routed_second_pass": []
+}
+[2026/11/19 周四 17:21:51.71] bridge_worker round exited rc=0 
+{
+  "ok": true,
+  "data_root": "C:\\Users\\32831\\wt\\bridge-live",
+  "reopened": [],
+  "routed_first_pass": [],
+  "audits": [
+    {
+      "audit_run_id": "audit-delivery-T-188-eb5f8ae7636a4692a97618c88f58088a",
+      "status": "dead-letter",
+      "parked_in": "dead-letter",
+      "error": "Command '['C:\\\\Users\\\\32831\\\\AppData\\\\Roaming\\\\npm\\\\claude.CMD', '-p', '--model', 'claude-opus-4-8', '--append-system-prompt-file', 'C:\\\\Users\\\\32831\\\\AppData\\\\Local\\\\Temp\\\\tmpju2k12be-acceptance-auditor.md', '--permission-mode', 'default', '--allowedTools', 'Bash,Read,Grep,Glob', '--settings', 'C:\\"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-251-99801d6d99514d419ffe244b5ef769e0",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T12:33:41.718856+00:00"
+    }
+  ],
+  "routed_second_pass": [
+    {
+      "event_id": null,
+      "route": "ignore",
+      "error": null
+    },
+    {
+      "event_id": null,
+      "route": "acceptance",
+      "error": null
+    },
+    {
+      "event_id": null,
+      "route": "ignore",
+      "error": null
+    },
+    {
+      "event_id": null,
+      "route": "acceptance",
+      "error": null
+    },
+    {
+      "event_id": null,
+      "route": "ignore",
+      "error": null
+    },
+    {
+      "event_id": null,
+      "route": "acceptance",
+      "error": null
+    },
+    {
+      "event_id": null,
+      "route": "acceptance",
+      "error": null
+    }
+  ]
+}
+[2026/11/19 周四 20:36:15.29] bridge_worker round exited rc=0 
+{
+  "ok": true,
+  "data_root": "C:\\Users\\32831\\wt\\bridge-live",
+  "reopened": [
+    {
+      "audit_run_id": "audit-delivery-T-188-eb5f8ae7636a4692a97618c88f58088a",
+      "status": "skipped",
+      "reason": "contract hash changed since the request was built"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-251-99801d6d99514d419ffe244b5ef769e0",
+      "status": "skipped",
+      "reason": "card is at 'retry_requested', not 'auditing'"
+    }
+  ],
+  "routed_first_pass": [
+    {
+      "event_id": null,
+      "route": "ignore",
+      "error": null
+    },
+    {
+      "event_id": null,
+      "route": "ignore",
+      "error": null
+    }
+  ],
+  "audits": [
+    {
+      "audit_run_id": "audit-delivery-T-186-readmit-8a243efb59c84997b05bd3d5e7fb575d",
+      "status": "dead-letter",
+      "parked_in": "dead-letter",
+      "error": "Command '['C:\\\\Users\\\\32831\\\\AppData\\\\Roaming\\\\npm\\\\claude.CMD', '-p', '--model', 'claude-opus-4-8', '--append-system-prompt-file', 'C:\\\\Users\\\\32831\\\\AppData\\\\Local\\\\Temp\\\\tmpbe4258oy-acceptance-auditor.md', '--permission-mode', 'default', '--allowedTools', 'Bash,Read,Grep,Glob', '--settings', 'C:\\"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-206-readmit-4a49713b31c04a67b4865f3b18fc8a26",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T14:43:39.637399+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-252-readmit-57db6924b5b2474c8bc07c5740250d3b",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T14:43:39.672215+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-268-readmit-5761870ac51148feb9d0f623cb01cef5",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T14:43:39.686898+00:00"
+    }
+  ],
+  "routed_second_pass": [
+    {
+      "event_id": null,
+      "route": "needs_human",
+      "error": null
+    },
+    {
+      "event_id": null,
+      "route": "acceptance",
+      "error": null
+    },
+    {
+      "event_id": null,
+      "route": "acceptance",
+      "error": null
+    },
+    {
+      "event_id": null,
+      "route": "acceptance",
+      "error": null
+    }
+  ]
+}
+[2026/11/19 周四 22:44:29.14] bridge_worker round exited rc=0 
+{
+  "ok": true,
+  "data_root": "C:\\Users\\32831\\wt\\bridge-live",
+  "reopened": [
+    {
+      "audit_run_id": "audit-delivery-T-186-readmit-8a243efb59c84997b05bd3d5e7fb575d",
+      "task_id": "T-186",
+      "status": "reopened",
+      "reopen_count": 1,
+      "at": "2026-11-19T15:02:11.008332+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-188-eb5f8ae7636a4692a97618c88f58088a",
+      "status": "skipped",
+      "reason": "contract hash changed since the request was built"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-251-99801d6d99514d419ffe244b5ef769e0",
+      "task_id": "T-251",
+      "status": "reopened",
+      "reopen_count": 1,
+      "at": "2026-11-19T15:02:11.418624+00:00"
+    }
+  ],
+  "routed_first_pass": [],
+  "audits": [
+    {
+      "audit_run_id": "audit-delivery-T-186-readmit-8a243efb59c84997b05bd3d5e7fb575d",
+      "status": "dead-letter",
+      "parked_in": "dead-letter",
+      "error": "Command '['C:\\\\Users\\\\32831\\\\AppData\\\\Roaming\\\\npm\\\\claude.CMD', '-p', '--model', 'claude-opus-4-8', '--append-system-prompt-file', 'C:\\\\Users\\\\32831\\\\AppData\\\\Local\\\\Temp\\\\tmpqpfza9xr-acceptance-auditor.md', '--permission-mode', 'default', '--allowedTools', 'Bash,Read,Grep,Glob', '--settings', 'C:\\"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-188-bc4a1f0f81374c009b38d48ca62f237d",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T16:32:21.235619+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-206-readmit-4a49713b31c04a67b4865f3b18fc8a26",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T16:32:21.260013+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-208-0e855370faaf4794b130cebb83f857dd",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T16:32:21.276170+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-251-91971c7b85f644f4b2617b2367ab964a",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T16:32:21.304292+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-251-99801d6d99514d419ffe244b5ef769e0",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T16:32:21.334612+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-252-readmit-57db6924b5b2474c8bc07c5740250d3b",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T16:32:21.386622+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-268-readmit-5761870ac51148feb9d0f623cb01cef5",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T16:32:21.403399+00:00"
+    }
+  ],
+  "routed_second_pass": [
+    {
+      "event_id": null,
+      "route": "acceptance",
+      "error": null
+    }
+  ]
+}
+[2026/11/20 周五  0:32:45.53] bridge_worker round exited rc=0 
+{
+  "ok": true,
+  "data_root": "C:\\Users\\32831\\wt\\bridge-live",
+  "reopened": [
+    {
+      "audit_run_id": "audit-delivery-T-186-readmit-8a243efb59c84997b05bd3d5e7fb575d",
+      "task_id": "T-186",
+      "status": "reopened",
+      "reopen_count": 2,
+      "at": "2026-11-19T17:01:19.624398+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-188-eb5f8ae7636a4692a97618c88f58088a",
+      "status": "skipped",
+      "reason": "contract hash changed since the request was built"
+    }
+  ],
+  "routed_first_pass": [],
+  "audits": [
+    {
+      "audit_run_id": "audit-delivery-T-186-readmit-8a243efb59c84997b05bd3d5e7fb575d",
+      "status": "dead-letter",
+      "parked_in": "dead-letter",
+      "error": "Command '['C:\\\\Users\\\\32831\\\\AppData\\\\Roaming\\\\npm\\\\claude.CMD', '-p', '--model', 'claude-opus-4-8', '--append-system-prompt-file', 'C:\\\\Users\\\\32831\\\\AppData\\\\Local\\\\Temp\\\\tmp81an3ghm-acceptance-auditor.md', '--permission-mode', 'default', '--allowedTools', 'Bash,Read,Grep,Glob', '--settings', 'C:\\"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-187-1a1b81937f2c497aa37efcd6f90d45fd",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T18:31:20.508955+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-188-bc4a1f0f81374c009b38d48ca62f237d",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T18:31:20.600397+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-206-readmit-4a49713b31c04a67b4865f3b18fc8a26",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T18:31:20.698499+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-208-0e855370faaf4794b130cebb83f857dd",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T18:31:20.865213+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-251-91971c7b85f644f4b2617b2367ab964a",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T18:31:20.935989+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-251-99801d6d99514d419ffe244b5ef769e0",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T18:31:20.967363+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-252-readmit-57db6924b5b2474c8bc07c5740250d3b",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T18:31:21.526859+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-268-readmit-5761870ac51148feb9d0f623cb01cef5",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T18:31:21.558217+00:00"
+    }
+  ],
+  "routed_second_pass": []
+}
+[2026/11/20 周五  2:31:23.37] bridge_worker round exited rc=0 
+{
+  "ok": true,
+  "data_root": "C:\\Users\\32831\\wt\\bridge-live",
+  "reopened": [
+    {
+      "audit_run_id": "audit-delivery-T-186-readmit-8a243efb59c84997b05bd3d5e7fb575d",
+      "status": "skipped",
+      "reason": "reopen limit reached (2)"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-188-eb5f8ae7636a4692a97618c88f58088a",
+      "status": "skipped",
+      "reason": "contract hash changed since the request was built"
+    }
+  ],
+  "routed_first_pass": [],
+  "audits": [
+    {
+      "audit_run_id": "audit-delivery-T-187-1a1b81937f2c497aa37efcd6f90d45fd",
+      "status": "dead-letter",
+      "parked_in": "dead-letter",
+      "error": "Command '['C:\\\\Users\\\\32831\\\\AppData\\\\Roaming\\\\npm\\\\claude.CMD', '-p', '--model', 'claude-opus-4-8', '--append-system-prompt-file', 'C:\\\\Users\\\\32831\\\\AppData\\\\Local\\\\Temp\\\\tmpo8moq4kb-acceptance-auditor.md', '--permission-mode', 'default', '--allowedTools', 'Bash,Read,Grep,Glob', '--settings', 'C:\\"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-188-bc4a1f0f81374c009b38d48ca62f237d",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T20:31:44.717363+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-206-readmit-4a49713b31c04a67b4865f3b18fc8a26",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T20:31:44.734052+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-208-0e855370faaf4794b130cebb83f857dd",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T20:31:44.738081+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-251-91971c7b85f644f4b2617b2367ab964a",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T20:31:44.752664+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-251-99801d6d99514d419ffe244b5ef769e0",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T20:31:44.754675+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-252-readmit-57db6924b5b2474c8bc07c5740250d3b",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T20:31:44.771380+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-268-readmit-5761870ac51148feb9d0f623cb01cef5",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T20:31:44.786946+00:00"
+    }
+  ],
+  "routed_second_pass": []
+}
+[2026/11/20 周五  4:31:45.77] bridge_worker round exited rc=0 
+{
+  "ok": true,
+  "data_root": "C:\\Users\\32831\\wt\\bridge-live",
+  "reopened": [
+    {
+      "audit_run_id": "audit-delivery-T-186-readmit-8a243efb59c84997b05bd3d5e7fb575d",
+      "status": "skipped",
+      "reason": "reopen limit reached (2)"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-187-1a1b81937f2c497aa37efcd6f90d45fd",
+      "task_id": "T-187",
+      "status": "reopened",
+      "reopen_count": 1,
+      "at": "2026-11-19T21:01:23.101016+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-188-eb5f8ae7636a4692a97618c88f58088a",
+      "status": "skipped",
+      "reason": "contract hash changed since the request was built"
+    }
+  ],
+  "routed_first_pass": [],
+  "audits": [
+    {
+      "audit_run_id": "audit-delivery-T-187-1a1b81937f2c497aa37efcd6f90d45fd",
+      "status": "dead-letter",
+      "parked_in": "dead-letter",
+      "error": "Command '['C:\\\\Users\\\\32831\\\\AppData\\\\Roaming\\\\npm\\\\claude.CMD', '-p', '--model', 'claude-opus-4-8', '--append-system-prompt-file', 'C:\\\\Users\\\\32831\\\\AppData\\\\Local\\\\Temp\\\\tmp5op2ns7j-acceptance-auditor.md', '--permission-mode', 'default', '--allowedTools', 'Bash,Read,Grep,Glob', '--settings', 'C:\\"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-188-bc4a1f0f81374c009b38d48ca62f237d",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T22:31:24.484238+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-206-readmit-4a49713b31c04a67b4865f3b18fc8a26",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T22:31:24.579077+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-208-0e855370faaf4794b130cebb83f857dd",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T22:31:24.647135+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-251-91971c7b85f644f4b2617b2367ab964a",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T22:31:24.669699+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-251-99801d6d99514d419ffe244b5ef769e0",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T22:31:24.701810+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-252-readmit-57db6924b5b2474c8bc07c5740250d3b",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T22:31:24.903193+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-268-readmit-5761870ac51148feb9d0f623cb01cef5",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-19T22:31:24.936853+00:00"
+    }
+  ],
+  "routed_second_pass": []
+}
+[2026/11/20 周五  6:31:26.91] bridge_worker round exited rc=0 
+{
+  "ok": true,
+  "data_root": "C:\\Users\\32831\\wt\\bridge-live",
+  "reopened": [
+    {
+      "audit_run_id": "audit-delivery-T-186-readmit-8a243efb59c84997b05bd3d5e7fb575d",
+      "status": "skipped",
+      "reason": "reopen limit reached (2)"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-187-1a1b81937f2c497aa37efcd6f90d45fd",
+      "task_id": "T-187",
+      "status": "reopened",
+      "reopen_count": 2,
+      "at": "2026-11-19T23:01:50.596537+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-188-eb5f8ae7636a4692a97618c88f58088a",
+      "status": "skipped",
+      "reason": "contract hash changed since the request was built"
+    }
+  ],
+  "routed_first_pass": [],
+  "audits": [
+    {
+      "audit_run_id": "audit-delivery-T-187-1a1b81937f2c497aa37efcd6f90d45fd",
+      "status": "dead-letter",
+      "parked_in": "dead-letter",
+      "error": "Command '['C:\\\\Users\\\\32831\\\\AppData\\\\Roaming\\\\npm\\\\claude.CMD', '-p', '--model', 'claude-opus-4-8', '--append-system-prompt-file', 'C:\\\\Users\\\\32831\\\\AppData\\\\Local\\\\Temp\\\\tmpgoc4603g-acceptance-auditor.md', '--permission-mode', 'default', '--allowedTools', 'Bash,Read,Grep,Glob', '--settings', 'C:\\"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-188-bc4a1f0f81374c009b38d48ca62f237d",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-20T00:31:53.735962+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-206-readmit-4a49713b31c04a67b4865f3b18fc8a26",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-20T00:31:53.754666+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-208-0e855370faaf4794b130cebb83f857dd",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-20T00:31:53.757528+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-251-91971c7b85f644f4b2617b2367ab964a",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-20T00:31:53.761555+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-251-99801d6d99514d419ffe244b5ef769e0",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-20T00:31:53.772985+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-252-readmit-57db6924b5b2474c8bc07c5740250d3b",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-20T00:31:53.792058+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-268-readmit-5761870ac51148feb9d0f623cb01cef5",
+      "status": "deferred",
+      "reason": "round audit cap reached (1)",
+      "at": "2026-11-20T00:31:53.798282+00:00"
+    }
+  ],
+  "routed_second_pass": []
+}
+[2026/11/20 周五  8:31:54.37] bridge_worker round exited rc=0 
+{"result": "C:\\Users\\32831\\wt\\bridge-live\\audit-results\\audit-delivery-T-187-f4fcc32c9d354db8b25d308893ed5ad8.json", "verdict": "PASS", "harvested": true, "pid": 29472}
+{"result": "C:\\Users\\32831\\wt\\bridge-live\\audit-results\\audit-delivery-T-188-bc4a1f0f81374c009b38d48ca62f237d.json", "verdict": "PASS"}
+{
+  "ok": true,
+  "data_root": "C:\\Users\\32831\\wt\\bridge-live",
+  "reopened": [
+    {
+      "audit_run_id": "audit-delivery-T-186-readmit-8a243efb59c84997b05bd3d5e7fb575d",
+      "status": "skipped",
+      "reason": "reopen limit reached (2)"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-187-1a1b81937f2c497aa37efcd6f90d45fd",
+      "status": "skipped",
+      "reason": "reopen limit reached (2)"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-188-eb5f8ae7636a4692a97618c88f58088a",
+      "status": "skipped",
+      "reason": "contract hash changed since the request was built"
+    }
+  ],
+  "routed_first_pass": [
+    {
+      "event_id": null,
+      "route": "acceptance",
+      "error": null
+    }
+  ],
+  "audits": [
+    {
+      "audit_run_id": "audit-delivery-T-187-f4fcc32c9d354db8b25d308893ed5ad8",
+      "status": "completed",
+      "verdict": "PASS",
+      "at": "2026-11-20T01:56:56.165090+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-188-bc4a1f0f81374c009b38d48ca62f237d",
+      "status": "completed",
+      "verdict": "PASS",
+      "at": "2026-11-20T02:19:34.012993+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-206-readmit-4a49713b31c04a67b4865f3b18fc8a26",
+      "status": "deferred",
+      "reason": "round audit cap reached (2)",
+      "at": "2026-11-20T02:19:34.014990+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-208-0e855370faaf4794b130cebb83f857dd",
+      "status": "deferred",
+      "reason": "round audit cap reached (2)",
+      "at": "2026-11-20T02:19:34.016995+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-251-91971c7b85f644f4b2617b2367ab964a",
+      "status": "deferred",
+      "reason": "round audit cap reached (2)",
+      "at": "2026-11-20T02:19:34.018992+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-251-99801d6d99514d419ffe244b5ef769e0",
+      "status": "deferred",
+      "reason": "round audit cap reached (2)",
+      "at": "2026-11-20T02:19:34.020503+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-252-readmit-57db6924b5b2474c8bc07c5740250d3b",
+      "status": "deferred",
+      "reason": "round audit cap reached (2)",
+      "at": "2026-11-20T02:19:34.022769+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-268-readmit-5761870ac51148feb9d0f623cb01cef5",
+      "status": "deferred",
+      "reason": "round audit cap reached (2)",
+      "at": "2026-11-20T02:19:34.024769+00:00"
+    }
+  ],
+  "routed_second_pass": [
+    {
+      "event_id": null,
+      "route": "needs_human",
+      "error": null
+    },
+    {
+      "event_id": null,
+      "route": "needs_human",
+      "error": null
+    },
+    {
+      "event_id": null,
+      "route": "ignore",
+      "error": null
+    },
+    {
+      "event_id": null,
+      "route": "acceptance",
+      "error": null
+    },
+    {
+      "event_id": null,
+      "route": "acceptance",
+      "error": null
+    }
+  ]
+}
+[2026/11/20 周五 10:20:23.90] bridge_worker round exited rc=0 
+{"result": "C:\\Users\\32831\\wt\\bridge-live\\audit-results\\audit-delivery-T-206-readmit-4a49713b31c04a67b4865f3b18fc8a26.json", "verdict": "PASS"}
+{"result": "C:\\Users\\32831\\wt\\bridge-live\\audit-results\\audit-delivery-T-208-0e855370faaf4794b130cebb83f857dd.json", "verdict": "PASS"}
+{
+  "ok": true,
+  "data_root": "C:\\Users\\32831\\wt\\bridge-live",
+  "reopened": [
+    {
+      "audit_run_id": "audit-delivery-T-186-readmit-8a243efb59c84997b05bd3d5e7fb575d",
+      "status": "skipped",
+      "reason": "reopen limit reached (2)"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-187-1a1b81937f2c497aa37efcd6f90d45fd",
+      "status": "skipped",
+      "reason": "reopen limit reached (2)"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-188-eb5f8ae7636a4692a97618c88f58088a",
+      "status": "skipped",
+      "reason": "contract hash changed since the request was built"
+    }
+  ],
+  "routed_first_pass": [],
+  "audits": [
+    {
+      "audit_run_id": "audit-delivery-T-206-readmit-4a49713b31c04a67b4865f3b18fc8a26",
+      "status": "completed",
+      "verdict": "PASS",
+      "at": "2026-11-20T03:15:43.660294+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-208-0e855370faaf4794b130cebb83f857dd",
+      "status": "completed",
+      "verdict": "PASS",
+      "at": "2026-11-20T03:35:31.263342+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-208-dca28df23b65439ebc291f72e3399794",
+      "status": "deferred",
+      "reason": "round audit cap reached (2)",
+      "at": "2026-11-20T03:35:31.263342+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-251-03fb24faf70d4cacbd8c712685e809e1",
+      "status": "deferred",
+      "reason": "round audit cap reached (2)",
+      "at": "2026-11-20T03:35:31.269393+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-251-91971c7b85f644f4b2617b2367ab964a",
+      "status": "deferred",
+      "reason": "round audit cap reached (2)",
+      "at": "2026-11-20T03:35:31.271400+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-251-99801d6d99514d419ffe244b5ef769e0",
+      "status": "deferred",
+      "reason": "round audit cap reached (2)",
+      "at": "2026-11-20T03:35:31.271400+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-252-readmit-57db6924b5b2474c8bc07c5740250d3b",
+      "status": "deferred",
+      "reason": "round audit cap reached (2)",
+      "at": "2026-11-20T03:35:31.271400+00:00"
+    },
+    {
+      "audit_run_id": "audit-delivery-T-268-readmit-5761870ac51148feb9d0f623cb01cef5",
+      "status": "deferred",
+      "reason": "round audit cap reached (2)",
+      "at": "2026-11-20T03:35:31.271400+00:00"
+    }
+  ],
+  "routed_second_pass": [
+    {
+      "event_id": null,
+      "route": "needs_human",
+      "error": null
+    },
+    {
+      "event_id": "audit-delivery-T-208-0e855370faaf4794b130cebb83f857dd",
+      "route": "dead_letter",
+      "error": "event audit_run_id does not match responsibility card"
+    }
+  ]
+}
+[2026/11/20 周五 11:36:03.96] bridge_worker round exited rc=0 

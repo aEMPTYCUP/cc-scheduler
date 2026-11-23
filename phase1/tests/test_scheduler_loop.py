@@ -100,3 +100,28 @@ def test_real_adapter_declares_itself_before_starting_on_production_pool(db_path
 
     with pytest.raises(orchestrator.RealPoolSimulationGuard):
         run_schedule_once("claude", "implement", lambda: SimAdapter(), max_tasks=1)
+
+
+def test_preflight_failure_blocks_dispatch(db_path):
+    # Fail-closed gate: a failing preflight must stop the pass BEFORE any task
+    # is claimed, so a broken environment never burns a task.
+    calls = []
+
+    def broken_preflight():
+        return {"ok": False, "failed": [{"name": "bridge mailbox writable",
+                                         "detail": "denied", "fix": "fix perms"}]}
+
+    rows = run_schedule_once("claude", "implement",
+                             lambda: orchestrator.SimulatedAdapter(),
+                             max_tasks=1, preflight=broken_preflight)
+    assert rows[0]["status"] == "preflight_failed"
+    assert "bridge mailbox writable" in rows[0]["error"]
+    assert calls == []
+
+
+def test_preflight_passes_and_dispatch_proceeds(db_path):
+    rows = run_schedule_once("claude", "implement",
+                             lambda: orchestrator.SimulatedAdapter(),
+                             max_tasks=1,
+                             preflight=lambda: {"ok": True, "failed": []})
+    assert rows and rows[0]["status"] in ("idle", "worked", "error")

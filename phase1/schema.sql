@@ -124,3 +124,10 @@ CREATE TABLE IF NOT EXISTS worker_sessions (
     stopped_at TEXT,
     PRIMARY KEY (executor_id, node)
 );
+
+-- v4: pool-level metadata. pool_mode = 'demo' (simulated workers allowed) or
+-- 'production' (a real imported task pool; simulated GO is refused by guard).
+CREATE TABLE IF NOT EXISTS pool_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);

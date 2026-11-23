@@ -17,6 +17,8 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -206,30 +208,51 @@ def check_doubao_identities(report: Report, bridge_root: str) -> None:
 def check_codex_sandbox_functional(report: Report) -> None:
     """Deep probe: can the Codex Windows sandbox actually run a command?
 
-    On this host the elevated backend never completes the runner pipe handshake
-    ("timed out after 15000ms connecting runner pipe-in"), so the platform runs
-    codex with DSH_CODEX_SANDBOX=danger-full-access inside an isolated worktree.
-    This check makes the state visible instead of hiding it.
+    Root cause found 2026-11-20: the Windows sandbox only works from an
+    INTERACTIVE, ELEVATED session. Over SSH (non-interactive) the runner pipe
+    handshake times out; without elevation the setup cannot grant write ACEs
+    (os error 5). A plain probe in this process therefore reports a false
+    failure -- the honest check is the scheduled-task probe that runs in the
+    interactive session (DSH-CodexProbe / DSH-CodexWorker).
     """
-    path = _find_binary("codex")
-    if not path:
-        return
+    marker = Path(tempfile.gettempdir()) / "codex-sandbox-probe-result.txt"
+    if marker.is_file():
+        marker.unlink()
+    task = "DSH-CodexProbe"
+    cmd = (f'cmd /c codex sandbox cmd.exe /c echo SANDBOX-OK > "{marker}" 2>&1')
     try:
-        proc = subprocess.run(["codex", "sandbox", "echo", "probe"],
-                              capture_output=True, text=True, timeout=90,
-                              shell=(os.name == "nt"))
-        out = (proc.stdout + proc.stderr)
-        ok = proc.returncode == 0 and "probe" in out
+        subprocess.run(["schtasks", "/delete", "/tn", task, "/f"],
+                       capture_output=True, text=True, timeout=30)
+        created = subprocess.run(
+            ["schtasks", "/create", "/tn", task, "/tr", cmd,
+             "/sc", "once", "/st", "23:59", "/it", "/ru", "32831", "/f"],
+            capture_output=True, text=True, timeout=60)
+        if "SUCCESS" not in (created.stdout + created.stderr).upper():
+            report.add("codex windows sandbox functional", False,
+                       "could not create the interactive probe task",
+                       "run the probe manually from an elevated terminal",
+                       warn_only=True)
+            return
+        subprocess.run(["schtasks", "/run", "/tn", task],
+                       capture_output=True, text=True, timeout=30)
+        for _ in range(30):
+            time.sleep(2)
+            if marker.is_file():
+                break
+        out = marker.read_text(encoding="utf-8", errors="ignore") if marker.is_file() else ""
+        ok = "SANDBOX-OK" in out
         report.add("codex windows sandbox functional", ok,
-                   "sandbox ran the command" if ok else out.strip()[:120],
-                   "update the Codex desktop app (Microsoft Store) so its sandbox "
-                   "service matches the CLI; until then keep "
-                   "DSH_CODEX_SANDBOX=danger-full-access",
+                   "sandbox ran the command (interactive+elevated)" if ok else out.strip()[:140],
+                   "the sandbox needs an INTERACTIVE and ELEVATED session "
+                   "(DSH-CodexWorker task); keep DSH_CODEX_SANDBOX=workspace-write "
+                   "and run the worker through that task",
                    warn_only=True)
     except Exception as exc:  # noqa: BLE001
-        report.add("codex windows sandbox functional", False, str(exc)[:120],
-                   "update the Codex desktop app; keep DSH_CODEX_SANDBOX=danger-full-access",
-                   warn_only=True)
+        report.add("codex windows sandbox functional", False, str(exc)[:140],
+                   "run the probe manually", warn_only=True)
+    finally:
+        subprocess.run(["schtasks", "/delete", "/tn", task, "/f"],
+                       capture_output=True, text=True, timeout=30)
 
 
 def check_bridge_mailbox(report: Report, bridge_root: str) -> None:

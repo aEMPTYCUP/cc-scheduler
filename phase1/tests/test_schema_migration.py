@@ -167,7 +167,8 @@ def test_fresh_install_creates_the_full_v1_schema(db_path: Path) -> None:
         assert "released_at" in _columns(conn, "claims")
         assert V1_INDEXES <= _indexes(conn)
 
-        assert protocol.SCHEMA_VERSION == 3
+        # Migration reaches the current schema version (follow the constant,
+        # do not hard-code a version that drifts on each schema bump).
         assert conn.execute("PRAGMA user_version").fetchone()[0] == protocol.SCHEMA_VERSION
 
         executors = conn.execute(

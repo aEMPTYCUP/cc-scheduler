@@ -66,6 +66,14 @@ def row_task(row: sqlite3.Row) -> dict:
         "last_error": row["last_error"] if "last_error" in keys else None,
         "behavioral_check": row["behavioral_check"] if "behavioral_check" in keys else "",
         "pass_condition": row["pass_condition"] if "pass_condition" in keys else "",
+        "allowed_paths": (
+            json.loads(row["allowed_paths_json"])
+            if "allowed_paths_json" in keys and row["allowed_paths_json"] else []
+        ),
+        "dependencies": (
+            json.loads(row["dependencies_json"])
+            if "dependencies_json" in keys and row["dependencies_json"] else []
+        ),
     }
 
 
@@ -124,6 +132,21 @@ def build_prompt_base(task: dict, role: dict | None) -> str:
         )
     else:
         spec = f"## ROLE_SPEC 摘要\n未找到角色 {role_id} 的 ROLE_SPEC，请先在 roles/ 下补齐 AGENT.md。"
+
+    allowed = task.get("allowed_paths") or []
+    behavioral = (task.get("behavioral_check") or "").strip()
+    deps = task.get("dependencies") or []
+    contract_lines = ["## 结构化契约（必须遵守）"]
+    contract_lines.append(
+        "允许改动路径（白名单，越界即违规）：\n" +
+        ("\n".join(f"- {p}" for p in allowed) if allowed else "- （未限定，按任务描述判断）")
+    )
+    if deps:
+        contract_lines.append("前置依赖：" + ", ".join(deps))
+    if behavioral:
+        contract_lines.append("行为检查（需实跑并留存输出）：" + behavioral)
+    contract = "\n".join(contract_lines)
+
     return (
         f"你现在的角色是 {role_id}。\n\n"
         f"## 任务\n"
@@ -131,8 +154,9 @@ def build_prompt_base(task: dict, role: dict | None) -> str:
         f"{description}\n\n"
         f"## 验收标准\n"
         f"{acceptance}\n\n"
+        f"{contract}\n\n"
         f"{spec}\n\n"
-        "请严格按 ROLE_SPEC 执行，不要自行增加需求。"
+        "请严格按 ROLE_SPEC 与白名单执行，不要自行增加需求，不要改动白名单外文件。"
         "完成后请给出简要实现说明，并写明 role_spec_sha256。"
     )
 

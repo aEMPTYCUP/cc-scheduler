@@ -32,7 +32,14 @@ def _resolve_db_path() -> Path:
 
 DB_PATH = _resolve_db_path()
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+
+# Pool operating mode. 'production' marks a real imported task pool whose state
+# must not be driven by the simulated adapter; 'demo' (the default for any DB
+# without an explicit marker) allows simulated workers for demonstrations.
+POOL_MODE_KEY = "pool_mode"
+POOL_MODES = ("demo", "production")
+DEFAULT_POOL_MODE = "demo"
 
 # Review decisions that require an independent reviewer
 # (P1_SCHEMA_DESIGN.md section 6.2): the implementer of a task may
@@ -197,6 +204,40 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
     conn.executescript(_V3_CAPABILITIES_REBUILD_SQL)
 
 
+def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
+    """Add pool-level metadata (additive only; no table rebuild)."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS pool_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        """
+    )
+
+
+def get_pool_mode() -> str:
+    """Return the pool mode; a DB without a marker defaults to safe 'demo'."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT value FROM pool_meta WHERE key=?", (POOL_MODE_KEY,)
+        ).fetchone()
+    mode = row["value"] if row else DEFAULT_POOL_MODE
+    return mode if mode in POOL_MODES else DEFAULT_POOL_MODE
+
+
+def set_pool_mode(mode: str) -> None:
+    if mode not in POOL_MODES:
+        raise ValueError(f"pool mode must be one of {POOL_MODES}, got {mode!r}")
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO pool_meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (POOL_MODE_KEY, mode),
+        )
+        conn.commit()
+
+
 def _seed_capabilities(conn: sqlite3.Connection) -> None:
     """Seed per-node capability defaults; existing toggles are preserved."""
     now = utcnow()
@@ -228,6 +269,8 @@ def ensure_schema() -> None:
                 _migrate_v1_to_v2(conn)
             if version < 3:
                 _migrate_v2_to_v3(conn)
+            if version < 4:
+                _migrate_v3_to_v4(conn)
         _seed_executors(conn)
         _seed_capabilities(conn)
         conn.commit()
@@ -426,6 +469,46 @@ def atomic_claim(task_id: str, agent_id: str, executor_id: Optional[str] = None)
     _write_package(task_id, package)
     print(f"Claimed {task_id} by {agent_id}, package_hash={package_hash[:12]}")
     return package
+
+
+def reassign_claim(task_id: str, new_owner: str, actor: str = "bridge-sync",
+                   reason: str = "") -> bool:
+    """Move a console task's claim to a different owner.
+
+    The console state machine has no CLAIMED->READY edge and no API that
+    changes ``claimed_by``, so an owner transfer on the bridge card cannot be
+    expressed with ``transition()``. The only faithful projection is a direct
+    reset to READY (the card is 'dispatched' again: the new owner still has to
+    claim it), exactly the shape the bridge projector already uses when it
+    reopens a bounced task. The move is written to audit_log so it stays
+    visible instead of silently overwriting the old holder.
+
+    Returns True when the task was actually moved.
+    """
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT status, claimed_by FROM tasks WHERE task_id=?", (task_id,)
+        ).fetchone()
+        if not row:
+            return False
+        if row["status"] in ("DONE", "ACCEPTED", "INTEGRATION"):
+            # Already through the human gate: re-opening it here would undo a
+            # decision that is not ours to undo.
+            return False
+        current_owner = row["claimed_by"]
+        if current_owner == new_owner:
+            return False
+        now = utcnow()
+        conn.execute(
+            "UPDATE tasks SET status='READY', claimed_by=NULL, "
+            "implementer_executor_id=NULL, claimed_at=NULL, updated_at=? "
+            "WHERE task_id=?",
+            (now, task_id),
+        )
+        _audit(conn, task_id, actor, row["status"], "READY",
+               reason or f"owner transfer {current_owner} -> {new_owner}",
+               evidence=f"from={current_owner};to={new_owner}")
+    return True
 
 
 def _build_package(task: sqlite3.Row, role: sqlite3.Row, agent_id: str) -> dict:

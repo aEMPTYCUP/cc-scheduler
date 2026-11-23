@@ -1,0 +1,5 @@
+headless worker started: permission=bypassPermissions timeout=2400s interval=30.0s
+=== T-185 ===
+Package written to C:\Users\32831\cc-scheduler\phase1\task-packages\T-185
+Claimed T-185 by claude, package_hash=bfb165234d2a
+Task T-185: CLAIMED → IN_PROGRESS
