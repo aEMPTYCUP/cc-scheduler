@@ -315,12 +315,19 @@ def create_task(task_id: str, title: str, description: str, role_id: str,
                 priority: str = "medium", dependencies: Optional[list] = None,
                 allowed_paths: Optional[list] = None,
                 behavioral_check: str = "",
-                pass_condition: str = "", max_retries: int = 3) -> str:
+                pass_condition: str = "", max_retries: int = 3,
+                executor_id: Optional[str] = None) -> str:
     """Create a task in BACKLOG.
 
     The keyword arguments behind created_by carry the structured contract
     (P1_SCHEMA_DESIGN.md section 3). They all have defaults, so the legacy
     six-argument call keeps working unchanged.
+
+    ``executor_id`` assigns the task to one executor channel. The assignment
+    is enforced by atomic_claim (another executor may not claim it) and by
+    the orchestrator's task selection, so several executors can work the same
+    pool in parallel without competing for the same task. None (the default)
+    means "any executor may take it" - the legacy behaviour.
     """
     if priority not in PRIORITY_ORDER:
         raise ValueError(
@@ -352,11 +359,12 @@ def create_task(task_id: str, title: str, description: str, role_id: str,
             INSERT INTO tasks (task_id, title, description, role_id, status,
                                acceptance_criteria, created_by, created_at, updated_at,
                                priority, dependencies_json, allowed_paths_json,
-                               behavioral_check, pass_condition, max_retries)
-            VALUES (?, ?, ?, ?, 'BACKLOG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                               behavioral_check, pass_condition, max_retries,
+                               executor_id)
+            VALUES (?, ?, ?, ?, 'BACKLOG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (task_id, title, description, role_id, acceptance_criteria, created_by,
               now, now, priority, dependencies_json, allowed_paths_json,
-              behavioral_check, pass_condition, max_retries))
+              behavioral_check, pass_condition, max_retries, executor_id))
         conn.executemany(
             "INSERT INTO task_dependencies (task_id, depends_on) VALUES (?, ?)",
             [(task_id, dep) for dep in deps],
@@ -435,6 +443,17 @@ def atomic_claim(task_id: str, agent_id: str, executor_id: Optional[str] = None)
         if not row:
             conn.execute("ROLLBACK")
             raise ValueError(f"Task {task_id} not READY or already claimed")
+
+        # Executor affinity: a task assigned to one channel may not be claimed
+        # by another. This is what lets claude and codex work the same pool
+        # concurrently without racing for the same task.
+        assigned = row["executor_id"] if "executor_id" in row.keys() else None
+        if assigned and executor_id and assigned != executor_id:
+            conn.execute("ROLLBACK")
+            raise ValueError(
+                f"Task {task_id} is assigned to executor {assigned!r}, "
+                f"not {executor_id!r}"
+            )
 
         role = conn.execute(
             "SELECT * FROM role_specs WHERE role_id=?", (row["role_id"],)

@@ -260,17 +260,21 @@ def select_next_task_for_node(node: str, executor_id: str) -> Optional[Dict[str,
         if cap is None or not cap["enabled"]:
             return None
         if node == "implement":
+            # Executor affinity: a task assigned to another channel is invisible
+            # here, so several executors can drain the same pool in parallel.
             row = conn.execute(
                 f"""
                 SELECT t.* FROM tasks t
                 WHERE t.status='READY'
+                  AND (t.executor_id IS NULL OR t.executor_id = ?)
                   AND NOT EXISTS (
                     SELECT 1 FROM task_dependencies d
                     JOIN tasks dep ON dep.task_id=d.depends_on
                     WHERE d.task_id=t.task_id AND dep.status <> 'DONE'
                   )
                 ORDER BY {_ORDER} LIMIT 1
-                """
+                """,
+                (executor_id,),
             ).fetchone()
         elif node == "acceptance":
             row = conn.execute(
