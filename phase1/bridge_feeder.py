@@ -164,7 +164,7 @@ class BacklogFeeder:
             exists = subprocess.run(
                 ["git", "-C", self.repo_path, "rev-parse", "--verify",
                  f"refs/heads/{branch}"],
-                capture_output=True, text=True).returncode == 0
+                capture_output=True, text=True, encoding="utf-8", errors="replace").returncode == 0
             if exists:
                 # The task was dispatched before (or its branch was created by
                 # another lane): attach the existing branch instead of failing

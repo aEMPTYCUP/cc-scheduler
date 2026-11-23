@@ -151,8 +151,7 @@ class MinimaxClient:
 
 def _git(worktree: str, *args: str) -> subprocess.CompletedProcess:
     # Force UTF-8: Windows defaults to GBK and crashes on Chinese file contents.
-    return subprocess.run(["git", "-C", worktree, *args], capture_output=True, text=True,
-                          encoding="utf-8", errors="replace")
+    return subprocess.run(["git", "-C", worktree, *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def _recorded_worktree(task: Optional[Dict[str, Any]]) -> Optional[Path]:

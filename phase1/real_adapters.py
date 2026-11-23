@@ -339,6 +339,42 @@ def commit_whitelisted(worktree: str, task: Dict[str, Any], message: str) -> str
     return after.stdout.strip() if after.returncode == 0 else head_before
 
 
+# The implementer session runs headless ("claude -p"). In headless mode nobody
+# answers permission prompts, so EVERY Bash call is auto-denied unless the tool
+# is pre-approved -- the agent then loops on denied commands and exits
+# non-zero (measured 2026-11-23 on the chart plan-link M0 task). Pre-approve
+# exactly the tools an implementer needs.
+IMPL_ALLOWED_TOOL_LIST = ("Bash", "Read", "Write", "Edit", "Grep", "Glob")
+IMPL_ALLOWED_TOOLS = ",".join(IMPL_ALLOWED_TOOL_LIST)
+# Deny rules enforce the platform red lines at the CLI level: no push, no
+# merge/rebase/reset/clean, no destructive file operations. The platform commits
+# the whitelisted paths itself.
+IMPL_DENY_RULES = (
+    "Bash(git push:*)", "Bash(git merge:*)", "Bash(git rebase:*)",
+    "Bash(git reset:*)", "Bash(git clean:*)", "Bash(git checkout:*)",
+    "Bash(git restore:*)", "Bash(git stash:*)", "Bash(git apply:*)",
+    "Bash(rm:*)", "Bash(rmdir:*)", "Bash(del:*)", "Bash(format:*)",
+    "Bash(taskkill:*)", "Bash(shutdown:*)",
+)
+
+
+def write_impl_settings() -> str:
+    """Write the implementer's permission settings to a temp file.
+
+    Travels as a file, never inline JSON: the npm .CMD shim mangles inline
+    multi-line argv. The caller deletes it.
+    """
+    handle = tempfile.NamedTemporaryFile(
+        "w", suffix="-impl.settings.json", delete=False, encoding="utf-8")
+    try:
+        json.dump({"permissions": {"allow": list(IMPL_ALLOWED_TOOL_LIST),
+                                   "deny": list(IMPL_DENY_RULES)}}, handle,
+                  ensure_ascii=False, indent=2)
+    finally:
+        handle.close()
+    return handle.name
+
+
 class ClaudeSubprocessAdapter(WorkerAdapter):
     """Real implement-node executor driving headless `claude -p` in a worktree.
 
@@ -403,6 +439,7 @@ class ClaudeSubprocessAdapter(WorkerAdapter):
             persona = self._load_persona(task["role_id"])
             persona_file = tempfile.NamedTemporaryFile(
                 "w", suffix=f"-{tid}-role.md", delete=False, encoding="utf-8")
+            settings_file = None
             try:
                 persona_file.write(persona)
                 persona_file.close()
@@ -411,10 +448,13 @@ class ClaudeSubprocessAdapter(WorkerAdapter):
                     raise RealAdapterError("claude executable not found in PATH")
                 # Short flags inline; persona by file, user prompt by stdin: the
                 # combination proven to survive the Windows npm .CMD shim.
+                settings_file = write_impl_settings()
                 cmd = [
                     claude, "-p",
                     "--append-system-prompt-file", persona_file.name,
                     "--permission-mode", self.permission_mode,
+                    "--allowedTools", IMPL_ALLOWED_TOOLS,
+                    "--settings", settings_file,
                     "--output-format", "json",
                 ]
                 result = self._runner(cmd, worktree,
@@ -422,6 +462,8 @@ class ClaudeSubprocessAdapter(WorkerAdapter):
                                       self.timeout)
             finally:
                 Path(persona_file.name).unlink(missing_ok=True)
+                if settings_file:
+                    Path(settings_file).unlink(missing_ok=True)
 
             returncode = getattr(result, "returncode", 1)
             if returncode != 0:

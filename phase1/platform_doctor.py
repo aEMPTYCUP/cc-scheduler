@@ -87,7 +87,7 @@ def check_git(report: Report, repo_path: Optional[str]) -> None:
         return
     try:
         out = subprocess.run(["git", "-C", str(repo), "worktree", "list"],
-                             capture_output=True, text=True, timeout=30)
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
         report.add("git worktree list works", out.returncode == 0,
                    f"{len(out.stdout.splitlines())} worktrees",
                    "run 'git worktree prune' to clear stale registrations")
@@ -105,7 +105,7 @@ def check_stale_worktrees(report: Report, repo_path: Optional[str]) -> None:
         return
     try:
         out = subprocess.run(["git", "-C", str(repo), "branch", "--list", "task/*"],
-                             capture_output=True, text=True, timeout=30)
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
         stale, active = [], []
         for raw in out.stdout.splitlines():
             line = raw.strip()
@@ -162,7 +162,7 @@ def check_executor(report: Report, name: str, binary: str, probe_cmd: Optional[L
         try:
             # On Windows the npm shims are .CMD files: they need shell=True
             # (or an explicit .exe) or subprocess raises WinError 2.
-            proc = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=60,
+            proc = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=60, encoding="utf-8", errors="replace",
                                   shell=(os.name == "nt"))
             out = (proc.stdout + proc.stderr).lower()
             broken = "createprocesswithlogonw failed" in out or "sandbox failed" in out
@@ -222,11 +222,11 @@ def check_codex_sandbox_functional(report: Report) -> None:
     cmd = (f'cmd /c codex sandbox cmd.exe /c echo SANDBOX-OK > "{marker}" 2>&1')
     try:
         subprocess.run(["schtasks", "/delete", "/tn", task, "/f"],
-                       capture_output=True, text=True, timeout=30)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
         created = subprocess.run(
             ["schtasks", "/create", "/tn", task, "/tr", cmd,
              "/sc", "once", "/st", "23:59", "/it", "/ru", "32831", "/f"],
-            capture_output=True, text=True, timeout=60)
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         if "SUCCESS" not in (created.stdout + created.stderr).upper():
             report.add("codex windows sandbox functional", False,
                        "could not create the interactive probe task",
@@ -234,7 +234,7 @@ def check_codex_sandbox_functional(report: Report) -> None:
                        warn_only=True)
             return
         subprocess.run(["schtasks", "/run", "/tn", task],
-                       capture_output=True, text=True, timeout=30)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
         for _ in range(30):
             time.sleep(2)
             if marker.is_file():
@@ -252,7 +252,7 @@ def check_codex_sandbox_functional(report: Report) -> None:
                    "run the probe manually", warn_only=True)
     finally:
         subprocess.run(["schtasks", "/delete", "/tn", task, "/f"],
-                       capture_output=True, text=True, timeout=30)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
 
 
 def check_bridge_mailbox(report: Report, bridge_root: str) -> None:
@@ -315,7 +315,7 @@ def check_scheduled_tasks(report: Report) -> None:
     for task, want_running in (("DSH-SyncWatch", True), ("AgentBridgeWorker", False)):
         try:
             proc = subprocess.run(["schtasks", "/query", "/tn", task, "/fo", "LIST"],
-                                  capture_output=True, text=True, timeout=30)
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
             out = proc.stdout
             enabled = "Disabled" not in out
             if want_running:

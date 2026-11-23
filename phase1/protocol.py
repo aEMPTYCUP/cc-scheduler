@@ -673,7 +673,7 @@ def create_worktree(repo_path: str, task_id: str, base_ref: str = "HEAD") -> str
     branch = f"task/{task_id}"
     subprocess.run(
         ["git", "worktree", "add", "-b", branch, str(worktree_path), base_ref],
-        cwd=repo, check=True, capture_output=True, text=True,
+        cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     with get_db() as conn:
         conn.execute(
@@ -696,7 +696,7 @@ def remove_worktree(repo_path: str, task_id: str, force: bool = False):
     if force:
         cmd.append("--force")
     cmd.append(wt)
-    subprocess.run(cmd, cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(cmd, cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     with get_db() as conn:
         conn.execute(
             "UPDATE tasks SET worktree_path=NULL, updated_at=? WHERE task_id=?",
@@ -708,7 +708,7 @@ def remove_worktree(repo_path: str, task_id: str, force: bool = False):
 def list_worktrees(repo_path: str) -> list:
     result = subprocess.run(
         ["git", "worktree", "list", "--porcelain"],
-        cwd=repo_path, capture_output=True, text=True, check=True,
+        cwd=repo_path, capture_output=True, text=True, check=True, encoding="utf-8", errors="replace",
     )
     return result.stdout.strip().split("\n\n") if result.stdout.strip() else []
 

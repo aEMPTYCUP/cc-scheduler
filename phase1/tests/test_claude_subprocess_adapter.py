@@ -2,6 +2,8 @@
 """Hermetic tests for the headless Claude subprocess adapter (no real claude)."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 import orchestrator
@@ -126,3 +128,38 @@ def test_production_runs_headless_adapter_through_worker(db_path, tmp_path, monk
         assert protocol.get_task(tid)["status"] == "REVIEW"
     finally:
         orchestrator.stop_worker("claude", "implement")
+
+
+def test_implement_session_preapproves_tools_and_denies_dangerous_git(db_path, tmp_path):
+    # Headless "claude -p" auto-denies every Bash call unless the tool is
+    # pre-approved: the agent then loops and exits non-zero (measured
+    # 2026-11-23 on the chart plan-link M0 task).
+    import json
+
+    from real_adapters import IMPL_ALLOWED_TOOLS, IMPL_DENY_RULES, write_impl_settings
+
+    runner = FakeRunner()
+    adapter = _adapter(tmp_path, runner)
+    tid = _ready_task("T-760")
+    (tmp_path / "wt").mkdir(parents=True, exist_ok=True)
+    adapter.implement(protocol.get_task(tid), "claude")
+
+    cmd = runner.calls[0]["cmd"]
+    assert "--allowedTools" in cmd
+    allowed = cmd[cmd.index("--allowedTools") + 1]
+    assert allowed == IMPL_ALLOWED_TOOLS
+    assert "Bash" in allowed and "Write" in allowed and "Edit" in allowed
+    assert "--settings" in cmd
+    settings_path = cmd[cmd.index("--settings") + 1]
+    # The settings file is deleted after the run, so read it from the caller's
+    # perspective: it must have existed (the CLI needs it) and carried the deny
+    # rules. Re-create it to assert the content.
+    fresh = write_impl_settings()
+    try:
+        permissions = json.loads(Path(fresh).read_text(encoding="utf-8"))["permissions"]
+        assert set(permissions["allow"]) == {"Bash", "Read", "Write", "Edit", "Grep", "Glob"}
+        for rule in ("Bash(git push:*)", "Bash(git merge:*)", "Bash(rm:*)"):
+            assert rule in permissions["deny"]
+        assert set(permissions["deny"]) == set(IMPL_DENY_RULES)
+    finally:
+        Path(fresh).unlink(missing_ok=True)

@@ -381,7 +381,7 @@ class SimulatedAdapter(WorkerAdapter):
 
 def _git_read(repo_path: str, *args: str) -> "subprocess.CompletedProcess":
     return subprocess.run(
-        ["git", "-C", str(repo_path), *args], capture_output=True, text=True,
+        ["git", "-C", str(repo_path), *args], capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
 
 
@@ -491,14 +491,14 @@ class GitIntegrationAdapter(WorkerAdapter):
     def _git(self, *args: str) -> "subprocess.CompletedProcess":
         return subprocess.run(
             ["git", "-C", self.repo_path, *args],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
 
     @staticmethod
     def _branch_of(worktree: str) -> str:
         result = subprocess.run(
             ["git", "-C", worktree, "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         branch = result.stdout.strip()
         if result.returncode != 0 or not branch or branch == "HEAD":
@@ -538,7 +538,7 @@ class GitIntegrationAdapter(WorkerAdapter):
                 return f"{tid} conflict -> sent back to REVIEW"
             if self.check_command:
                 check = subprocess.run(self.check_command, cwd=self.repo_path,
-                                       shell=True, capture_output=True, text=True)
+                                       shell=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
                 if check.returncode != 0:
                     self._git("reset", "--hard", "ORIG_HEAD")
                     self._send_back_to_review(
