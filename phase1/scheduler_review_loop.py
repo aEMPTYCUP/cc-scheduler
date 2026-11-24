@@ -80,6 +80,15 @@ def pending_reviews() -> list[dict]:
     return [latest[k] for k in sorted(latest, key=lambda t: int(latest[t].get("seq") or 0))]
 
 
+
+def _contract_for(task_id: str) -> str:
+    """按任务编号选契约：阶段2 的 003/004 用阶段2 契约，其余用阶段1 契约。"""
+    stage2 = {"T-ALERT-003", "T-ALERT-004", "T-ALERT-005", "T-ALERT-006"}
+    name = ("预警中心_阶段2_实现契约.md" if task_id in stage2
+            else "预警中心_阶段1_实现契约.md")
+    return "docs/" + name
+
+
 def already_reviewed(task_id: str) -> bool:
     """该任务是否已经有审核产物（避免重复审核）。
 
@@ -124,17 +133,27 @@ def run_review(item: dict) -> dict:
         conn.commit()
 
     local_id = "T-REVIEW-%s" % task_id
+    executor = pick_executor()          # 02:06 之后 = codex；建卡时就要按它写，否则池里挂着 claude
+    contract = _contract_for(task_id)   # 阶段1 任务用 §11 契约，阶段2 用 §6/§7 契约
     if protocol.get_task(local_id) is None:
         protocol.create_task(
             local_id, "独立审核 %s" % task_id,
-            "按契约 docs/预警中心_阶段1_实现契约.md §11 逐条审核 %s 的交付，"
-            "产出 .agent-audits/alerts-review.md 与 alerts/tests/test_review.py。"
-            "只审核不补实现。" % task_id,
-            "A7-code-reviewer", "契约 §11 逐条有结论", priority="high",
-            allowed_paths=["alerts/tests/test_review.py", ".agent-audits/alerts-review.md"],
+            "按契约 %s 逐条审核 %s 的交付，产出 .agent-audits/alerts-review.md。"
+            "只审核不补实现；缺失项写成报告，由协调方发返工单。" % (contract, task_id),
+            "A7-code-reviewer", "契约对应章节逐条有结论", priority="high",
+            allowed_paths=[".agent-audits/alerts-review.md", "alerts/tests/test_review.py"],
             behavioral_check="C:/Users/32831/openmontage/.venv/Scripts/python.exe -m pytest alerts/tests -q",
-            executor_id="claude")
+            executor_id=executor)
         protocol.ready_task(local_id)
+    else:
+        # 已存在的卡要纠正执行器（历史建卡写死了 claude，02:06 后必须改）
+        existing = protocol.get_task(local_id)
+        if existing.get("executor_id") != executor:
+            protocol.reassign_task(local_id, executor) if hasattr(protocol, "reassign_task") else None
+            with protocol.get_db() as conn:
+                conn.execute("UPDATE tasks SET executor_id=? WHERE task_id=?",
+                             (executor, local_id))
+                conn.commit()
 
     # 审核必须在**独立工作区**：不能在被审方的工作区里写文件，
     # 否则审核产物会污染交付方（正是 T-ALERT-002 首轮被误判的同类问题）。
