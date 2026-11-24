@@ -41,6 +41,14 @@ CODEX_COOLDOWN_UNTIL = datetime(2026, 11, 24, 13, 30)   # 约 3 小时后复查�
 DEFAULT_AFTER_COOLDOWN = "codex"
 
 
+# 2026-11-24 15:35：codex 的 Windows 沙箱缺陷复发 —— 每条命令前都触发
+# 沙箱重装（cmd /c echo hi 自检 + codex-windows-sandbox-setup 重跑），
+# 空转 25 分钟不产出报告（-o 输出文件 0 字节）。这是**环境缺陷**，不是任务问题。
+# 处置：审核执行器暂时回到 claude（火山 AgentPlan 可用），
+# 等 codex 沙箱修好再切回。改这一个常量即可。
+CODEX_COOLDOWN_UNTIL = datetime(2026, 11, 24, 23, 59)   # 暂定至今日 23:59
+
+
 def pick_executor(now: datetime | None = None) -> str:
     """选审核执行器：codex 冷却窗口内用 claude，窗口结束后回默认（codex）。"""
     now = now or datetime.now()
@@ -129,6 +137,23 @@ def mark_reviewed(task_id: str, report_path: str = "") -> None:
         MANIFEST_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
         pass
+
+
+
+# 任务 → 审核用仓库（按任务实际交付的代码所在仓库）
+_FUTURES_REPO = r"C:\Users\32831\OneDrive\Desktop\期货分析"
+_FUTURES_TASKS = ("T-ALERT-009",)   # 阶段5 的路由层在期货仓库
+
+
+def _review_repo_for(task_id: str):
+    """返回 (repo_path, base_branch, review_branch)。
+
+    默认审 dj-chart 的 feature/plan-link；阶段 5 的任务在期货仓库，
+    审 master。**不能一律用 dj-chart** —— 否则审核会去审一个不存在的模块。
+    """
+    if task_id in _FUTURES_TASKS:
+        return _FUTURES_REPO, "master", "review/%s" % task_id
+    return CHART, "feature/plan-link", "review/%s" % task_id
 
 
 _IN_FLIGHT_STATUSES = ("CLAIMED", "IN_PROGRESS")
@@ -245,7 +270,10 @@ def run_review(item: dict) -> dict:
         protocol.create_task(
             local_id, "独立审核 %s" % task_id,
             "按契约 %s 逐条审核 %s 的交付，产出 .agent-audits/alerts-review.md。"
-            "只审核不补实现；缺失项写成报告，由协调方发返工单。" % (contract, task_id),
+            "只审核不补实现；缺失项写成报告，由协调方发返工单。\n"
+            "【重要·不要拉真实行情】审核只跑单测与 git 证据："
+            "禁止访问行情数据源（data/*.dat 会 404）、禁止跑 plan.run_pipeline 取真实 K 线；"
+            "需要真实数据时用注入的假数据。" % (contract, task_id),
             "A7-code-reviewer", "契约对应章节逐条有结论", priority="high",
             allowed_paths=[".agent-audits/alerts-review.md", "alerts/tests/test_review.py"],
             behavioral_check="C:/Users/32831/openmontage/.venv/Scripts/python.exe -m pytest alerts/tests -q",
@@ -263,13 +291,17 @@ def run_review(item: dict) -> dict:
 
     # 审核必须在**独立工作区**：不能在被审方的工作区里写文件，
     # 否则审核产物会污染交付方（正是 T-ALERT-002 首轮被误判的同类问题）。
+    # 审核工作区必须落在**该任务代码所在的仓库**：
+    # 阶段 5 的 T-ALERT-009 在期货仓库（期货分析），不在 dj-chart。
+    # 若一律建在 dj-chart，审核会去审一个不存在的模块 —— 2026-11-24 实测踩到。
+    repo_path, base, branch = _review_repo_for(task_id)
+
     review_wt = r"C:\Users\32831\wt\wt-REVIEW-%s" % task_id
-    base = "feature/plan-link"
-    branch = "review/%s" % task_id
     wt_path = Path(review_wt)
     if not wt_path.is_dir():
-        git("branch", "-D", branch, check=False)
-        git("worktree", "add", "-b", branch, review_wt, base)
+        # worktree 必须建在**该任务代码所在的仓库**里（git -C repo_path）
+        git("branch", "-D", branch, cwd=repo_path, check=False)
+        git("worktree", "add", "-b", branch, review_wt, base, cwd=repo_path)
     task = protocol.get_task(local_id)
     task["worktree_path"] = review_wt
     executor = pick_executor()
@@ -278,11 +310,11 @@ def run_review(item: dict) -> dict:
         from codex_adapter import CodexAdapter
         from real_adapters import commit_whitelisted
         adapter = CodexAdapter(
-            CHART, timeout=3600,
+            repo_path, timeout=3600,
             committer=lambda wt, tsk: commit_whitelisted(
                 wt, tsk, "task %s: review via codex" % tsk.get("task_id")))
     else:
-        adapter = ClaudeSubprocessAdapter(CHART, timeout=3600)
+        adapter = ClaudeSubprocessAdapter(repo_path, timeout=3600)
     summary = adapter.implement(task, executor)
     status = protocol.get_task(local_id)["status"]
     if status in ("REVIEW", "SUBMITTED"):
