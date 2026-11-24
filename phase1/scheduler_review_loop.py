@@ -31,16 +31,22 @@ sys.path.insert(0, str(PHASE1_DIR))
 
 CHART = r"C:\Users\32831\wt\dj-chart"
 
-# 执行器分工（用户 2026-11-23 定）：MiniMax 于 2026-11-24 02:06 结束冷却，
-# 此后**不再给 Claude Code 派新任务，新任务一律给 codex**（codex 本就走 MiniMax）。
-# 02:06 之前（Claude 的火山 AgentPlan 可用）仍由 Claude 执行。
-CODEX_CUTOFF = datetime(2026, 11, 24, 2, 6)
+# 执行器分工（用户 2026-11-23 定，2026-11-24 10:20 修订）：
+#   * 原规则：MiniMax 2026-11-24 02:06 结束冷却后，新任务一律给 codex；
+#   * 修订（江总 2026-11-24 10:20）：codex 走 MiniMax，**token 已耗尽、需再冷却 3+ 小时**，
+#     故审核转回 Claude Code（走火山 AgentPlan，目前可用）。
+# 实现：用「冷却窗口」表达，不写死单一执行器——窗口内一律 claude，窗口结束后
+# 按默认规则回 codex。这样 token 恢复后不需要再改代码。
+CODEX_COOLDOWN_UNTIL = datetime(2026, 11, 24, 13, 30)   # 约 3 小时后复查；恢复后改这里即可
+DEFAULT_AFTER_COOLDOWN = "codex"
 
 
 def pick_executor(now: datetime | None = None) -> str:
-    """按时间点选执行器：02:06 之后 codex，之后不再派新任务给 Claude。"""
+    """选审核执行器：codex 冷却窗口内用 claude，窗口结束后回默认（codex）。"""
     now = now or datetime.now()
-    return "codex" if now >= CODEX_CUTOFF else "claude"
+    if now < CODEX_COOLDOWN_UNTIL:
+        return "claude"
+    return DEFAULT_AFTER_COOLDOWN
 BRIDGE = r"C:\Users\32831\wt\bridge-live"
 ROUTE_DIR = Path(os.environ.get("DSH_ROUTE_HOME", r"C:\Users\32831\.agent-bridge-route")) / "route"
 TARGET_PREFIX = "T-ALERT-"
@@ -57,6 +63,57 @@ def log(msg: str) -> None:
 def git(*args, cwd=CHART, check=True):
     return subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True,
                           encoding="utf-8", errors="replace", check=check)
+
+
+
+
+MANIFEST_FILE = Path(os.environ.get("DSH_ROUTE_HOME", r"C:\Users\32831\.agent-bridge-route")) / "reviewed.json"
+
+
+def _reviewed_manifest() -> set:
+    """已审任务清单（兼容历史报告：1-A/1-B 的报告标题里没有任务编号）。"""
+    try:
+        data = json.loads(MANIFEST_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return set()
+    if isinstance(data, dict):
+        data = data.get("reviewed") or []
+    return set(str(x) for x in data)
+
+
+def mark_reviewed(task_id: str, report_path: str = "") -> None:
+    """登记「该任务已审」，避免重复派审。审核跑完后调用。"""
+    try:
+        MANIFEST_FILE.parent.mkdir(parents=True, exist_ok=True)
+        data = {"reviewed": sorted(_reviewed_manifest())}
+        if task_id not in data["reviewed"]:
+            data["reviewed"].append(task_id)
+        data["reviewed"] = sorted(set(data["reviewed"]))
+        MANIFEST_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+_IN_FLIGHT_STATUSES = ("CLAIMED", "IN_PROGRESS")
+
+
+def already_in_flight(task_id: str) -> bool:
+    """该任务的审核卡是否正被另一个 review loop 跑着（防并发重复派）。
+
+    2026-11-24 实测教训：手动跑 + 计划任务（每 2 分钟）同时触发时，后到的那次
+    atomic_claim 失败（"not READY or already claimed"），其错误处理把任务标成
+    FAILED/BLOCKED；先到的那次跑完想 transition SUBMITTED 时状态已非法
+    （ValueError: Invalid transition FAILED -> SUBMITTED），报告虽已产出但状态机崩掉。
+    """
+    import os
+    os.environ.setdefault("PHASE1_DB", r"C:\Users\32831\dj-chart-pool.db")
+    try:
+        import protocol
+        local_id = "T-REVIEW-%s" % task_id
+        task = protocol.get_task(local_id)
+    except Exception:
+        return False
+    return bool(task) and task.get("status") in _IN_FLIGHT_STATUSES
 
 
 def pending_reviews() -> list[dict]:
@@ -96,13 +153,25 @@ def already_reviewed(task_id: str) -> bool:
     wt-<id>-CLAUDE 等），所以按**内容**而不是路径判定：凡是提到该 task_id
     的审核报告都算已审。
     """
+    # 先查已审清单（兼容标题不含任务编号的历史报告，如 1-A/1-B 那两份）
+    if task_id in _reviewed_manifest():
+        return True
     wt_root = Path(r"C:\Users\32831\wt")
+    # 只认「本任务自己的审核报告」，不能用「正文里提到过该编号」判定：
+    # 003 的报告会把 004 作为"范围外"提及，否则 004 会被误判为已审而永不派审。
+    # 报告首行格式：# 预警中心 · <task_id> 独立审核报告（...）
+    title_patterns = (
+        "# 预警中心 · %s 独立审核报告" % task_id,
+        "# 预警中心·%s 独立审核报告" % task_id,
+    )
     for report in wt_root.glob("wt-*/.agent-audits/alerts-review.md"):
         try:
-            if task_id in report.read_text(encoding="utf-8", errors="ignore"):
-                return True
+            head = report.read_text(encoding="utf-8", errors="ignore")[:800]
         except Exception:
             continue
+        for pat in title_patterns:
+            if pat in head:
+                return True
     return False
 
 
@@ -178,8 +247,12 @@ def run_review(item: dict) -> dict:
     else:
         adapter = ClaudeSubprocessAdapter(CHART, timeout=3600)
     summary = adapter.implement(task, executor)
+    status = protocol.get_task(local_id)["status"]
+    if status in ("REVIEW", "SUBMITTED"):
+        # 审核跑完就登记，避免下一轮 review loop 再派一次（历史教训见 already_in_flight）
+        mark_reviewed(task_id)
     return {"task_id": task_id, "executor": executor, "summary": summary,
-            "status": protocol.get_task(local_id)["status"]}
+            "status": status}
 
 
 def main() -> int:
@@ -197,6 +270,9 @@ def main() -> int:
             task_id = item["task_id"]
             if already_reviewed(task_id):
                 log("[SKIP] %s 已有审核产物" % task_id)
+                continue
+            if already_in_flight(task_id):
+                log("[SKIP] %s 正在被另一个 review loop 审核（防并发重复派）" % task_id)
                 continue
             if args.dry_run:
                 log("[DRY] 将审核 %s（seq=%s）| 执行器=%s" % (
