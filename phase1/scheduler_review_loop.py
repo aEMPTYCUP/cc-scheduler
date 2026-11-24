@@ -140,6 +140,17 @@ def _reviewed_manifest() -> set:
     return set(str(x) for x in data)
 
 
+def unmark_reviewed(task_id: str) -> None:
+    """撤销「已审」登记（审核跑完但未签收时调用）。"""
+    try:
+        data = {"reviewed": sorted(_reviewed_manifest())}
+        if task_id in data["reviewed"]:
+            data["reviewed"].remove(task_id)
+        MANIFEST_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def mark_reviewed(task_id: str, report_path: str = "") -> None:
     """登记「该任务已审」，避免重复派审。审核跑完后调用。"""
     try:
@@ -155,8 +166,24 @@ def mark_reviewed(task_id: str, report_path: str = "") -> None:
 
 
 # 任务 → 审核用仓库（按任务实际交付的代码所在仓库）
-_FUTURES_REPO = r"C:\Users\32831\OneDrive\Desktop\期货分析"
+# 期货仓库路径：2026-11-24 实证它已从 OneDrive\Desktop 移到 C:\Users\32831\repos\
+# （log 证据：43eaaf7 data map: restore 20 L1 sources after onedrive rollback）。
+# 旧路径在审核时表现为 `fatal: not a git repository`（路径解析到已不存在的目录）。
+# 故按**候选列表**逐个探测，取第一个存在的 git 仓库 —— 避免再次因搬家而断链。
+_FUTURES_REPO_CANDIDATES = (
+    r"C:\Users\32831\repos\期货分析",
+    r"C:\Users\32831\OneDrive\Desktop\期货分析",
+)
 _FUTURES_TASKS = ("T-ALERT-009",)   # 阶段5 的路由层在期货仓库
+
+
+def _futures_repo():
+    """返回期货仓库的实际路径（逐个探测候选，取第一个存在且是 git 仓库的）。"""
+    import os
+    for cand in _FUTURES_REPO_CANDIDATES:
+        if os.path.isdir(cand) and os.path.isdir(os.path.join(cand, ".git")):
+            return cand
+    return _FUTURES_REPO_CANDIDATES[0]
 
 
 def _review_repo_for(task_id: str):
@@ -166,7 +193,7 @@ def _review_repo_for(task_id: str):
     审 master。**不能一律用 dj-chart** —— 否则审核会去审一个不存在的模块。
     """
     if task_id in _FUTURES_TASKS:
-        return _FUTURES_REPO, "master", "review/%s" % task_id
+        return _futures_repo(), "master", "review/%s" % task_id
     return CHART, "feature/plan-link", "review/%s" % task_id
 
 
@@ -222,6 +249,18 @@ def _contract_for(task_id: str) -> str:
     return "docs/" + name
 
 
+def _review_task_status(task_id: str) -> str:
+    """该任务的**审核卡**状态（空串表示没有审核卡）。"""
+    import os
+    os.environ.setdefault("PHASE1_DB", r"C:\Users\32831\dj-chart-pool.db")
+    try:
+        import protocol
+        task = protocol.get_task("T-REVIEW-%s" % task_id)
+    except Exception:
+        return ""
+    return (task or {}).get("status") or ""
+
+
 def already_reviewed(task_id: str) -> bool:
     """该任务是否已经有审核产物（避免重复审核）。
 
@@ -229,7 +268,13 @@ def already_reviewed(task_id: str) -> bool:
     wt-<id>-CLAUDE 等），所以按**内容**而不是路径判定：凡是提到该 task_id
     的审核报告都算已审。
     """
-    # 先查已审清单（兼容标题不含任务编号的历史报告，如 1-A/1-B 那两份）
+    # 2026-11-24 修正：原实现只看「审核跑完就登记」的清单，于是
+    # **verdict=FAIL 的审核也被当成已审 → 永远不会复审**（009 首轮 FAIL 被跳过）。
+    # 现在以**审核卡状态**为准：ACCEPTED（已签收）→ 已审；其它状态 → 要复审。
+    status = _review_task_status(task_id)
+    if status:
+        return status == "ACCEPTED"
+    # 没有审核卡时退回清单判定（兼容历史：1-A/1-B 的报告标题不含任务编号）
     if task_id in _reviewed_manifest():
         return True
     wt_root = Path(r"C:\Users\32831\wt")
@@ -351,9 +396,13 @@ def run_review(item: dict) -> dict:
         adapter = ClaudeSubprocessAdapter(repo_path, timeout=3600)
     summary = adapter.implement(task, executor)
     status = protocol.get_task(local_id)["status"]
-    if status in ("REVIEW", "SUBMITTED"):
-        # 审核跑完就登记，避免下一轮 review loop 再派一次（历史教训见 already_in_flight）
+    if status == "ACCEPTED":
+        # 只有**签收**才登记为已审
         mark_reviewed(task_id)
+    else:
+        # 审核跑完但未签收（verdict=FAIL / 需复审）→ **撤销登记**，
+        # 让下一轮能重新派审（否则失败的审核会永远被跳过 —— 2026-11-24 实测）。
+        unmark_reviewed(task_id)
     return {"task_id": task_id, "executor": executor, "summary": summary,
             "status": status}
 
