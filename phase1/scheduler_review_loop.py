@@ -87,8 +87,18 @@ def _pid_alive(pid: int) -> bool:
         return True
 
 
+# 锁持有者的最大存活时长（秒）。超过即视为**残留锁**（进程被杀/机器休眠/收尾卡死），
+# 允许新实例接管 —— 否则一次残留会让审核闭环永久停摆（2026-11-24 实测：
+# 21:49 那轮的 claude 已退出，但 python 进程卡在收尾，锁一直被占）。
+LOCK_STALE_SECONDS = int(os.environ.get("DSH_REVIEW_LOCK_STALE", "5400"))
+
+
 def _acquire_lock(lock_file: Path) -> bool:
-    """抢单实例锁：写入当前 PID；若已有存活的 PID 持有则放弃。"""
+    """抢单实例锁：写入当前 PID；若已有存活的 PID 持有则放弃。
+
+    残留锁处理：持有者超过 LOCK_STALE_SECONDS（默认 90 分钟）视为已死，
+    接管锁继续跑（审核一轮正常要 20-40 分钟，超过 90 分钟基本可判定卡死）。
+    """
     try:
         lock_file.parent.mkdir(parents=True, exist_ok=True)
         if lock_file.is_file():
@@ -97,7 +107,11 @@ def _acquire_lock(lock_file: Path) -> bool:
             except Exception:
                 pid = 0
             if pid and _pid_alive(pid):
-                return False
+                age = time.time() - lock_file.stat().st_mtime
+                if age < LOCK_STALE_SECONDS:
+                    return False
+                log("[LOCK] 持有者 PID %d 已存活 %d 秒（超过 %d），判定为残留锁，接管"
+                    % (pid, int(age), LOCK_STALE_SECONDS))
         lock_file.write_text(str(os.getpid()), encoding="utf-8")
         return True
     except Exception:
@@ -298,8 +312,28 @@ def run_review(item: dict) -> dict:
 
     review_wt = r"C:\Users\32831\wt\wt-REVIEW-%s" % task_id
     wt_path = Path(review_wt)
-    if not wt_path.is_dir():
-        # worktree 必须建在**该任务代码所在的仓库**里（git -C repo_path）
+    # 有效性判定：目录在**且**它是该仓库的 git worktree。
+    # 只看 is_dir() 会被残留目录骗过（清理脚本删了内容但 .git 文件还在），
+    # 于是跳过 worktree add → 审核在一个非仓库目录里跑（2026-11-24 实测）。
+    def _is_valid_worktree():
+        if not wt_path.is_dir():
+            return False
+        dotgit = wt_path / ".git"
+        if not dotgit.exists():
+            return False
+        try:
+            out = subprocess.run(["git", "-C", str(wt_path), "rev-parse", "--is-inside-work-tree"],
+                                 capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace", timeout=20)
+            return "true" in (out.stdout or "").strip()
+        except Exception:
+            return False
+
+    if not _is_valid_worktree():
+        # 残留目录先清掉再建（worktree 必须建在**该任务代码所在的仓库**里）
+        if wt_path.is_dir():
+            subprocess.run(["cmd", "/c", "rmdir /s /q " + review_wt], capture_output=True)
+        git("worktree", "prune", cwd=repo_path, check=False)
         git("branch", "-D", branch, cwd=repo_path, check=False)
         git("worktree", "add", "-b", branch, review_wt, base, cwd=repo_path)
     task = protocol.get_task(local_id)
