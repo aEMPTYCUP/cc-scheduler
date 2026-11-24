@@ -46,15 +46,29 @@ DEFAULT_AFTER_COOLDOWN = "codex"
 # 空转 25 分钟不产出报告（-o 输出文件 0 字节）。这是**环境缺陷**，不是任务问题。
 # 处置：审核执行器暂时回到 claude（火山 AgentPlan 可用），
 # 等 codex 沙箱修好再切回。改这一个常量即可。
-CODEX_COOLDOWN_UNTIL = datetime(2026, 11, 24, 23, 59)   # 暂定至今日 23:59
+# 2026-11-25 00:50：**审核执行器固定用 claude**。
+#
+# 理由（codex Windows 沙箱缺陷第三次复发）：
+#   1. 23:59 起 codex 审 T-ALERT-009 时**每条命令前都重装沙箱 helper**
+#      （sandbox 日志刷满 helper copy/launch resolution）→ 空转 50 分钟无产出；
+#   2. 22:00 审 T-ALERT-008 时把 `.git/config` 当**图片**去读 →
+#      `unable to locate image` → 退出码 1；
+#   3. 15:32 审 T-ALERT-007 时同样反复 `cmd /c echo hi` 自检 + 沙箱重装。
+#
+# 共同特征：**都发生在「多轮读文件 / 跑命令」这一步**，不是任务逻辑问题。
+# 审核类任务恰好就是「读大量文件 + 跑 git + 跑 pytest」—— 正是 codex 踩坑的场景。
+# 故能力边界定为：
+#   * **审核 / 复审 → 固定 claude**（走火山 AgentPlan）；
+#   * **codex → 只用于纯生成**（写代码不需多轮读文件），或待其沙箱修好后再放开。
+CODEX_COOLDOWN_UNTIL = datetime(2026, 11, 25, 23, 59)   # 审核固定用 claude，此值仅作记录
 
 
 def pick_executor(now: datetime | None = None) -> str:
-    """选审核执行器：codex 冷却窗口内用 claude，窗口结束后回默认（codex）。"""
-    now = now or datetime.now()
-    if now < CODEX_COOLDOWN_UNTIL:
-        return "claude"
-    return DEFAULT_AFTER_COOLDOWN
+    """选审核执行器：**固定 claude**（见上方注释的能力边界）。
+
+    保留 now 参数与冷却常量是为了将来 codex 沙箱修好后一处放开。
+    """
+    return "claude"
 BRIDGE = r"C:\Users\32831\wt\bridge-live"
 ROUTE_DIR = Path(os.environ.get("DSH_ROUTE_HOME", r"C:\Users\32831\.agent-bridge-route")) / "route"
 TARGET_PREFIX = "T-ALERT-"
@@ -323,8 +337,26 @@ def run_review(item: dict) -> dict:
         conn.commit()
 
     local_id = "T-REVIEW-%s" % task_id
-    executor = pick_executor()          # 02:06 之后 = codex；建卡时就要按它写，否则池里挂着 claude
+    executor = pick_executor()          # 审核固定 claude（见 pick_executor 的能力边界说明）
     contract = _contract_for(task_id)   # 阶段1 任务用 §11 契约，阶段2 用 §6/§7 契约
+    existing = protocol.get_task(local_id)
+    if existing is not None and existing.get("status") in ("BLOCKED", "FAILED", "NEEDS_HUMAN"):
+        # 自愈：上一轮审核失败/被 park 的卡**不能永远卡住** —— 先把它重置为
+        # READY 再重跑（2026-11-25 实测：codex 沙箱失败留下的 BLOCKED 卡让
+        # 后续每一轮都 "not READY or already claimed"，审核再也不会发生）。
+        try:
+            with protocol.get_db() as conn:
+                conn.execute("UPDATE tasks SET status='READY', claimed_by=NULL, "
+                             "claimed_at=NULL, last_error=NULL WHERE task_id=?", (local_id,))
+                conn.commit()
+            try:
+                protocol.ready_task(local_id)
+            except Exception:
+                pass
+            log("[RECOVER] %s 上一轮状态 %s，已重置为 READY 重新审核"
+                % (local_id, existing.get("status")))
+        except Exception as exc:  # noqa: BLE001
+            log("[WARN] 重置 %s 失败：%s" % (local_id, exc))
     if protocol.get_task(local_id) is None:
         protocol.create_task(
             local_id, "独立审核 %s" % task_id,
