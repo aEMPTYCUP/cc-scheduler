@@ -67,6 +67,43 @@ def git(*args, cwd=CHART, check=True):
 
 
 
+
+def _pid_alive(pid: int) -> bool:
+    """用 tasklist 判断 PID 是否存活（Windows）。查不到时按「活着」保守处理。"""
+    try:
+        out = subprocess.run(["tasklist", "/FI", "PID eq %d" % pid],
+                             capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=10)
+        return str(pid) in (out.stdout or "")
+    except Exception:
+        return True
+
+
+def _acquire_lock(lock_file: Path) -> bool:
+    """抢单实例锁：写入当前 PID；若已有存活的 PID 持有则放弃。"""
+    try:
+        lock_file.parent.mkdir(parents=True, exist_ok=True)
+        if lock_file.is_file():
+            try:
+                pid = int(lock_file.read_text(encoding="utf-8").strip() or 0)
+            except Exception:
+                pid = 0
+            if pid and _pid_alive(pid):
+                return False
+        lock_file.write_text(str(os.getpid()), encoding="utf-8")
+        return True
+    except Exception:
+        return True   # 锁机制失败不阻断审核
+
+
+def _release_lock(lock_file: Path) -> None:
+    try:
+        if lock_file.is_file() and lock_file.read_text(encoding="utf-8").strip() == str(os.getpid()):
+            lock_file.unlink()
+    except Exception:
+        pass
+
+
 MANIFEST_FILE = Path(os.environ.get("DSH_ROUTE_HOME", r"C:\Users\32831\.agent-bridge-route")) / "reviewed.json"
 
 
@@ -263,6 +300,14 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="只列出会做什么，不真跑审核")
     args = parser.parse_args()
 
+    # 单实例锁：计划任务每 2 分钟触发一次，若上一轮还没跑完（审核要 20-40 分钟），
+    # 新一轮会与旧轮并发抢同一任务，导致 atomic_claim 冲突 → 把正在审核的任务
+    # 标成 FAILED → 先到者提交时状态非法（2026-11-24 实测事故）。
+    lock_file = Path(os.environ.get("DSH_ROUTE_HOME", r"C:\Users\32831\.agent-bridge-route")) / "reviewloop.lock"
+    if not _acquire_lock(lock_file):
+        log("[LOCK] 另一轮 review loop 正在运行，本轮退出")
+        return 0
+
     def one_round() -> None:
         items = pending_reviews()
         log("[QUEUE] %d 条待审核（T-ALERT-*）" % len(items))
@@ -286,13 +331,19 @@ def main() -> int:
                 log("[ERROR] %s 审核失败：%s: %s" % (task_id, type(exc).__name__, exc))
 
     if args.watch:
-        while True:
-            try:
-                one_round()
-            except Exception as exc:
-                log("[ERROR] %s: %s" % (type(exc).__name__, exc))
-            time.sleep(max(args.interval, 60))
-    one_round()
+        try:
+            while True:
+                try:
+                    one_round()
+                except Exception as exc:
+                    log("[ERROR] %s: %s" % (type(exc).__name__, exc))
+                time.sleep(max(args.interval, 60))
+        finally:
+            _release_lock(lock_file)
+    try:
+        one_round()
+    finally:
+        _release_lock(lock_file)
     return 0
 
 
