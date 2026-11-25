@@ -104,7 +104,11 @@ def _pid_alive(pid: int) -> bool:
 # 锁持有者的最大存活时长（秒）。超过即视为**残留锁**（进程被杀/机器休眠/收尾卡死），
 # 允许新实例接管 —— 否则一次残留会让审核闭环永久停摆（2026-11-24 实测：
 # 21:49 那轮的 claude 已退出，但 python 进程卡在收尾，锁一直被占）。
+LOCK_FILE = Path(os.environ.get("DSH_REVIEW_LOCK",
+                              r"C:\Users\32831\.agent-bridge-route\reviewloop.lock"))
 LOCK_STALE_SECONDS = int(os.environ.get("DSH_REVIEW_LOCK_STALE", "5400"))
+#: IN_PROGRESS/CLAIMED 死卡判定阈值（执行器进程已死 + 超过此时长 → 可重置）
+STALE_IN_PROGRESS_SECONDS = 10 * 60
 
 
 def _acquire_lock(lock_file: Path) -> bool:
@@ -190,6 +194,11 @@ _FUTURES_REPO_CANDIDATES = (
 )
 _FUTURES_TASKS = ("T-ALERT-009",)   # 阶段5 的路由层在期货仓库
 
+# 阶段5 的任务用**阶段5 契约**（复审 R-1：派单时按阶段1 契约指派是协调方的错，
+# 审核方据此核对会全篇错位）。这里做硬校验，不靠"记得选对"。
+_STAGE5_CONTRACT = "预警中心_阶段5_实现契约.md"
+_STAGE1_CONTRACT = "预警中心_阶段1_实现契约.md"
+
 
 def _futures_repo():
     """返回期货仓库的实际路径（逐个探测候选，取第一个存在且是 git 仓库的）。"""
@@ -214,6 +223,17 @@ def _review_repo_for(task_id: str):
 _IN_FLIGHT_STATUSES = ("CLAIMED", "IN_PROGRESS")
 
 
+
+def _review_executor_alive() -> bool:
+    """是否有 review loop 或 claude 进程真的在跑（判死卡用，比时间窗准）。"""
+    import subprocess as _sp
+    try:
+        out = _sp.run(["tasklist"], capture_output=True, text=True,
+                      encoding="utf-8", errors="replace").stdout.lower()
+    except Exception:
+        return True          # 拿不到进程表 → 保守认为活着，不误伤
+    return ("claude" in out) or ("scheduler_review_loop" in out)
+
 def already_in_flight(task_id: str) -> bool:
     """该任务的审核卡是否正被另一个 review loop 跑着（防并发重复派）。
 
@@ -230,7 +250,27 @@ def already_in_flight(task_id: str) -> bool:
         task = protocol.get_task(local_id)
     except Exception:
         return False
-    return bool(task) and task.get("status") in _IN_FLIGHT_STATUSES
+    if not task or task.get("status") not in _IN_FLIGHT_STATUSES:
+        return False
+    # 2026-11-25 09:29 修：**不能用「锁存在」判「别人在跑」** ——
+    # 计划任务每 2 分钟跑一次，它自己在 main() 里就持着锁，
+    # 于是「锁存在」永远为真 → 死卡永久被判「在飞」→ 自愈永远走不到（死锁）。
+    # 改用两条判据：执行器进程是否存活 + claimed_at 是否超时。
+    claimed = task.get("claimed_at")
+    try:
+        import datetime as _dt
+        dt0 = _dt.datetime.fromisoformat(str(claimed).replace("Z", "+00:00"))
+        if dt0.tzinfo is None:
+            dt0 = dt0.replace(tzinfo=_dt.timezone.utc)
+        age = (_dt.datetime.now(_dt.timezone.utc) - dt0).total_seconds()
+    except Exception:
+        age = None
+    # 执行器（claude）进程已死 → 没人真在跑这张卡 → 死卡
+    if not _review_executor_alive():
+        return False
+    if age is None or age > STALE_IN_PROGRESS_SECONDS:
+        return False
+    return True
 
 
 def pending_reviews() -> list[dict]:
@@ -256,10 +296,17 @@ def pending_reviews() -> list[dict]:
 
 
 def _contract_for(task_id: str) -> str:
-    """按任务编号选契约：阶段2 的 003/004 用阶段2 契约，其余用阶段1 契约。"""
+    """按任务编号选契约。
+
+    * 阶段5（T-ALERT-009）→ 阶段5 契约（**硬校验**，复审 R-1）
+    * 阶段2（003–006）→ 阶段2 契约
+    * 其余 → 阶段1 契约
+    """
+    if task_id in _FUTURES_TASKS:
+        return "docs/" + _STAGE5_CONTRACT
     stage2 = {"T-ALERT-003", "T-ALERT-004", "T-ALERT-005", "T-ALERT-006"}
     name = ("预警中心_阶段2_实现契约.md" if task_id in stage2
-            else "预警中心_阶段1_实现契约.md")
+            else _STAGE1_CONTRACT)
     return "docs/" + name
 
 
@@ -340,6 +387,40 @@ def run_review(item: dict) -> dict:
     executor = pick_executor()          # 审核固定 claude（见 pick_executor 的能力边界说明）
     contract = _contract_for(task_id)   # 阶段1 任务用 §11 契约，阶段2 用 §6/§7 契约
     existing = protocol.get_task(local_id)
+    # 2026-11-25 09:26 补：**IN_PROGRESS / CLAIMED 死卡**也要自愈。
+    # 上一轮因 claude API Connection refused 失败后，卡停在 IN_PROGRESS，
+    # 而进程/锁都没了 → 后续每轮都判「正在被另一个 loop 审核」永久跳过。
+    if existing is not None and existing.get("status") in ("IN_PROGRESS", "CLAIMED"):
+        stale = False
+        claimed = existing.get("claimed_at")
+        age = None
+        try:
+            import datetime as _dt
+            dt0 = _dt.datetime.fromisoformat(str(claimed).replace("Z", "+00:00"))
+            if dt0.tzinfo is None:
+                dt0 = dt0.replace(tzinfo=_dt.timezone.utc)
+            age = (_dt.datetime.now(_dt.timezone.utc) - dt0).total_seconds()
+        except Exception:
+            age = None
+        # 执行器进程已死 或 超时 → 死卡（不再看锁：调用者自己可能持锁）
+        if (not _review_executor_alive()) or age is None or age > STALE_IN_PROGRESS_SECONDS:
+            stale = True
+        if stale:
+            try:
+                with protocol.get_db() as conn:
+                    conn.execute("UPDATE tasks SET status='READY', claimed_by=NULL, "
+                                 "claimed_at=NULL, last_error=NULL WHERE task_id=?",
+                                 (local_id,))
+                    conn.commit()
+                try:
+                    protocol.ready_task(local_id)
+                except Exception:
+                    pass
+                log("[RECOVER-STALE] %s 停在 %s 且无锁/无进程（age=%s 秒），已重置为 READY"
+                    % (local_id, existing.get("status"),
+                       int(age) if age is not None else "未知"))
+            except Exception as exc:  # noqa: BLE001
+                log("[WARN] 重置死卡 %s 失败：%s" % (local_id, exc))
     if existing is not None and existing.get("status") in ("BLOCKED", "FAILED", "NEEDS_HUMAN"):
         # 自愈：上一轮审核失败/被 park 的卡**不能永远卡住** —— 先把它重置为
         # READY 再重跑（2026-11-25 实测：codex 沙箱失败留下的 BLOCKED 卡让
